@@ -60,7 +60,7 @@ const children = id => id ? state.categories.filter(item => item.parentId === id
 
 function navLink(view) {
   const [label, glyph] = viewNames[view]
-  const active = (state.view === view || (view === 'home' && state.view === 'ledger')) ? 'aria-current="page"' : ''
+  const active = state.view === view ? 'aria-current="page"' : ''
   return `<button class="nav-link" data-action="navigate" data-value="${view}" ${active} type="button">${icon(glyph, 19)}${label}</button>`
 }
 
@@ -141,12 +141,10 @@ function home() {
         </section>
         ${pendingBanner(totals.pending)}
       </div>
-      <section class="book-activity">
-        <div class="activity-head"><h2>流水</h2><div class="inline-actions">
-          ${entries.length ? `<button class="plain" type="button" data-action="select-mode">${state.selecting ? '完成' : '选择'}</button>` : ''}
-          <button class="plain" type="button" data-action="navigate" data-value="ledger">筛选</button></div></div>
-        <div class="day-stack">${dayCards(entries)}</div>
-        ${entries.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}
+      <section class="book-activity" aria-labelledby="ledger-title">
+        <div class="activity-head"><h2 id="ledger-title" tabindex="-1">流水</h2></div>
+        ${ledgerTools()}
+        <div id="ledger-results">${ledgerResults()}</div>
       </section>
     </div>`
 }
@@ -159,7 +157,7 @@ function overview() {
   return `<div class="page-heading"><div><h1>报表</h1></div>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
-    <section class="panel"><div class="panel-head"><h2>近期流水</h2><button class="plain" type="button" data-action="navigate" data-value="ledger">查看全部</button></div>
+    <section class="panel"><div class="panel-head"><h2>近期流水</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">查看全部</button></div>
     <div class="ledger">${entries.length ? entries.slice(0, 5).map(item => transaction(item, state.categories, state.currency)).join('') : emptyLedger(Boolean(state.entries.length))}</div></section>`
 }
 
@@ -183,20 +181,18 @@ function ledgerEntries() {
   })
 }
 
-function categoryFilter() {
+function ledgerCategoryOptions() {
   const selected = state.categories.find(item => item.id === state.ledgerCategory)
   const root = selected?.parentId ? state.categories.find(item => item.id === selected.parentId) : selected
   const rootValue = state.ledgerCategory === null ? '*' : state.ledgerCategory === '' ? '' : root?.id
   const shown = state.ledgerDirection === 'all' ? ['expense', 'income'] : [state.ledgerDirection]
   const roots = direction => topCategories(direction).map(item => option(item.id, item.name, rootValue)).join('')
   const kids = root ? children(root.id) : []
-  return `<div class="category-filter">
-    <select class="control filter-select" data-filter="root" aria-label="一级分类">${option('*', '全部分类', rootValue)}
+  return `<select class="control filter-select" data-filter="root" aria-label="一级分类">${option('*', '全部分类', rootValue)}
       ${shown.length > 1 ? shown.map(direction => `<optgroup label="${directions[direction]}">${roots(direction)}</optgroup>`).join('') : roots(shown[0])}
       ${option('', '未分类', rootValue)}</select>
     ${kids.length ? `<select class="control filter-select" data-filter="child" aria-label="二级分类">
-      ${option(root.id, `全部${root.name}`, state.ledgerCategory)}${kids.map(item => option(item.id, item.name, state.ledgerCategory)).join('')}</select>` : ''}
-  </div>`
+      ${option(root.id, `全部${root.name}`, state.ledgerCategory)}${kids.map(item => option(item.id, item.name, state.ledgerCategory)).join('')}</select>` : ''}`
 }
 
 function ledgerResults() {
@@ -213,17 +209,15 @@ function ledgerResults() {
     ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}`
 }
 
-function ledger() {
+function ledgerTools() {
   const day = state.ledgerDay
-  return `<div class="page-heading"><div><h1>流水</h1></div>${periodControls()}</div>
-    <div class="ledger-tools">
+  return `<div class="ledger-tools">
       <label class="search-field">${icon('search', 17)}<span class="sr-only">搜索备注或分类</span>
         <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="搜索备注或分类" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
       <div class="ledger-filter">${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
-        ${categoryFilter()}</div>
-    </div>
-    ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除日期筛选">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
-    <div id="ledger-results">${ledgerResults()}</div>`
+        <div id="ledger-categories" class="category-filter">${ledgerCategoryOptions()}</div></div>
+      ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除日期筛选">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
+    </div>`
 }
 
 // Refresh only the list so the search box keeps focus and any IME composition in progress.
@@ -232,6 +226,13 @@ function refreshLedgerResults() {
   if (!results) { render(); return }
   results.innerHTML = ledgerResults()
   syncSelection()
+}
+
+function refreshLedgerCategories(focusRoot = false) {
+  const categories = byId('ledger-categories')
+  categories.innerHTML = ledgerCategoryOptions()
+  if (focusRoot) categories.firstElementChild.focus({ preventScroll: true })
+  refreshLedgerResults()
 }
 
 function categoryPage() {
@@ -252,7 +253,7 @@ function categoryPage() {
 
 function render() {
   chrome()
-  main.innerHTML = ({ home, overview, ledger, categories: categoryPage })[state.view]()
+  main.innerHTML = ({ home, overview, categories: categoryPage })[state.view]()
   syncSelection()
 }
 
@@ -351,12 +352,14 @@ function resetLedgerFilters() {
   state.searchAll = false
 }
 
-function go(view) {
+function go(view, focusLedger = false) {
   state.view = view
   stopSelecting()
   render()
-  main.focus({ preventScroll: true })
-  window.scrollTo(0, 0)
+  const target = focusLedger ? byId('ledger-title') : main
+  target.focus({ preventScroll: true })
+  if (focusLedger) target.scrollIntoView({ block: 'start' })
+  else window.scrollTo(0, 0)
 }
 
 function openDialog(title, content, layout = '') {
@@ -901,7 +904,7 @@ async function confirmImport() {
       state.month = importMonth
       state.range = oldest.slice(0, 7) === importMonth ? null : { start: oldest.slice(0, 10), end: mostRecent.slice(0, 10) }
       resetLedgerFilters()
-      go('ledger')
+      go('home', true)
     }
     toast(`已导入 ${added} 笔流水`)
     await refreshRates()
@@ -1002,9 +1005,9 @@ function pickFile(id) {
 }
 
 const actions = {
-  navigate: ({ value }) => {
+  navigate: ({ value, focus }) => {
     resetLedgerFilters()
-    go(value)
+    go(value, focus === 'ledger')
   },
   add: () => openEntry(),
   edit: ({ value }) => openEntry(value),
@@ -1042,7 +1045,7 @@ const actions = {
     stopSelecting()
     state.selecting = starting
     hidePaste()
-    render()
+    refreshLedgerResults()
   },
   'toggle-select': ({ value }, control) => {
     if (!state.selected.delete(value)) state.selected.add(value)
@@ -1082,15 +1085,23 @@ const actions = {
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },
   'stats-direction': ({ value }) => { state.statsDirection = value; render() },
   'trend-page': ({ value }) => { state.trendPage = Number(value); render() },
-  'ledger-direction': ({ value }) => {
+  'ledger-direction': ({ value }, control) => {
+    if (state.ledgerDirection === value) return
     state.ledgerDirection = value
     const category = state.categories.find(item => item.id === state.ledgerCategory)
     if (category && value !== 'all' && category.direction !== value) state.ledgerCategory = null
     state.ledgerLimit = 60
-    render()
+    for (const tab of control.parentElement.children) tab.setAttribute('aria-pressed', String(tab === control))
+    refreshLedgerCategories()
   },
-  'more-ledger': () => { state.ledgerLimit += 60; render() },
-  'clear-drill': () => { state.ledgerDay = null; state.ledgerLimit = 60; render() },
+  'more-ledger': () => { state.ledgerLimit += 60; refreshLedgerResults() },
+  'clear-drill': (_, control) => {
+    state.ledgerDay = null
+    state.ledgerLimit = 60
+    if (document.activeElement === control) byId('ledger-title').focus({ preventScroll: true })
+    control.remove()
+    refreshLedgerResults()
+  },
   'search-scope': () => { state.searchAll = !state.searchAll; state.ledgerLimit = 60; refreshLedgerResults() },
   'bulk-category': openBulkCategory,
   'bulk-direction': ({ value }) => { bulk.direction = value; bulk.categoryId = undefined; renderBulkCategory() },
@@ -1099,13 +1110,13 @@ const actions = {
   'drill-day': ({ start, end }) => {
     resetLedgerFilters()
     state.ledgerDay = { start, end }
-    go('ledger')
+    go('home', true)
   },
   'drill-category': ({ value }) => {
     resetLedgerFilters()
     state.ledgerCategory = value
     state.ledgerDirection = state.statsDirection
-    go('ledger')
+    go('home', true)
   },
   currency: async ({ value }) => {
     await saveCurrency(value)
@@ -1271,9 +1282,9 @@ document.addEventListener('visibilitychange', () => {
   reload().then(() => refreshRates()).catch(handleError)
 })
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && state.selecting && !dialog.open) { stopSelecting(); render() }
+  if (event.key === 'Escape' && state.selecting && !dialog.open) { stopSelecting(); refreshLedgerResults() }
   // Search runs as you type; Enter just puts the phone keyboard away.
-  if (event.key === 'Enter' && event.target.id === 'ledger-search' && !event.isComposing) event.target.blur()
+  if (event.key === 'Enter' && event.target.id === 'ledger-search' && !event.isComposing && event.keyCode !== 229) event.target.blur()
 })
 
 main.addEventListener('input', event => {
@@ -1285,12 +1296,12 @@ main.addEventListener('input', event => {
 
 main.addEventListener('change', event => {
   const control = event.target
-  if (!control.dataset.filter) return
+  const filter = control.dataset.filter
+  if (!filter) return
   state.ledgerCategory = control.value === '*' ? null : control.value
-  const category = state.categories.find(item => item.id === state.ledgerCategory)
-  if (category && state.ledgerDirection !== 'all' && category.direction !== state.ledgerDirection) state.ledgerDirection = category.direction
   state.ledgerLimit = 60
-  render()
+  if (filter === 'root') refreshLedgerCategories(true)
+  else refreshLedgerResults()
 })
 document.addEventListener('pointerdown', event => {
   if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()
