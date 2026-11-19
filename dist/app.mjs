@@ -1,5 +1,5 @@
 import {
-  amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, statementColumns,
+  amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, statementColumns,
   summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
@@ -61,7 +61,7 @@ function chrome() {
   byId('sidebar').innerHTML = `${brand('sidebar-brand')}<nav class="side-nav">${Object.keys(viewNames).map(navLink).join('')}</nav>
     <div class="side-foot"><button class="side-extra" type="button" data-action="backup">${icon('shield')}设置与备份</button>
     <div class="side-status"><span class="dot ${navigator.onLine ? '' : 'off'}"></span>${status}</div></div>`
-  byId('topbar').innerHTML = `<span class="top-label">${icon('shield', 16)}${status}</span>${brand('mobile-brand')}
+  byId('topbar').innerHTML = `${brand('mobile-brand')}
     <div class="top-actions">${icoButton('screen-paste', 'scan', '粘贴屏幕账单')}
     ${icoButton('pick-import', 'upload', '导入账单')}
     <span class="desktop-add">${button('add', '记一笔', '', 'plus', 'primary')}</span></div>`
@@ -86,21 +86,28 @@ function dayCards(entries) {
   }
   let remaining = state.ledgerLimit
   const cards = []
+  const today = tokyoNow().slice(0, 10)
+  const yesterday = offsetDate(today, -1)
   for (const [day, group] of groups) {
     if (remaining <= 0) break
     const sums = summarize(group, state.currency)
     const [, month, date] = day.split('-').map(Number)
-    const label = weekday.format(new Date(day + 'T00:00:00Z'))
+    const label = day === today ? '今天' : day === yesterday ? '昨天' : weekday.format(new Date(day + 'T00:00:00Z'))
+    const totals = [
+      sums.expense && `支 ${money(sums.expense, state.currency)}`,
+      sums.income && `收 ${money(sums.income, state.currency)}`,
+      sums.pending && '待换算'
+    ].filter(Boolean)
     cards.push(`<article class="day-card">
       <header class="day-head">
         <h3 aria-label="${dayLabel(day)}"><time datetime="${day}">${month}月${date}日</time><span>${label}</span></h3>
-        <p><span>支 ${money(sums.expense, state.currency)}</span><span>收 ${money(sums.income, state.currency)}</span>${sums.pending ? '<span>待换算</span>' : ''}</p>
+        <p>${totals.map(text => `<span>${text}</span>`).join('')}</p>
       </header>
       <div class="day-rows">${group.slice(0, remaining).map(entry => transaction(entry, state.categories, state.currency, true)).join('')}</div>
     </article>`)
     remaining -= group.length
   }
-  return entries.length ? cards.join('') : `<section class="day-card">${emptyLedger(Boolean(state.entries.length))}</section>`
+  return entries.length ? cards.join('') : `<section class="day-card empty-card">${emptyLedger(Boolean(state.entries.length))}</section>`
 }
 
 function home() {
@@ -114,12 +121,14 @@ function home() {
   return `<div class="page-heading book-heading"><h1>账本</h1>${periodControls()}</div>
     <div class="book-layout">
       <div class="book-digest">
-        <section class="book-hero" aria-label="收支摘要">
-          <div class="book-spotlight"><div><h2>今日支出</h2><strong>${money(daily.expense, state.currency)}</strong>
-            ${daily.pending ? `<small>${daily.pending} 笔待换算</small>` : ''}</div><span class="book-emblem">${icon('wallet', 24)}</span></div>
-          <div class="book-month"><div><span>${periodName}支出</span><strong>${money(totals.expense, state.currency)}</strong></div>
-            <div><span>${periodName}收入</span><strong>${money(totals.income, state.currency)}</strong></div></div>
-          <div class="book-net"><span>${periodName}净收支</span><strong>${money(totals.net, state.currency)}</strong></div>
+        <section class="digest" aria-label="收支摘要">
+          <div class="digest-today"><h2>今日支出</h2><strong>${money(daily.expense, state.currency)}</strong>
+            ${daily.pending ? `<small>${daily.pending} 笔待换算</small>` : ''}</div>
+          <dl class="digest-stats">
+            <div><dt>${periodName}支出</dt><dd>${money(totals.expense, state.currency)}</dd></div>
+            <div><dt>${periodName}收入</dt><dd>${money(totals.income, state.currency)}</dd></div>
+            <div><dt>${periodName}净收支</dt><dd>${money(totals.net, state.currency)}</dd></div>
+          </dl>
         </section>
         ${pendingBanner(totals.pending)}
       </div>

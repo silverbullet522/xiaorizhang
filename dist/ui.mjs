@@ -32,8 +32,7 @@ const paths = {
 
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? paths.tag}</svg>`
-const categoryTones = { coffee: 'orange', train: 'blue', bag: 'pink', home: 'sky', sparkle: 'purple', heart: 'green', wallet: 'green', gift: 'pink', transfer: 'sky' }
-export const categoryArt = (glyph, size = 19) => `<span class="category-icon tone-${categoryTones[glyph] ?? 'blue'}">${icon(glyph, size)}</span>`
+export const categoryArt = (glyph, size = 18) => `<span class="category-icon">${icon(glyph, size)}</span>`
 export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>小日账</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
 export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, label, selected)).join('')
@@ -64,15 +63,15 @@ export function periodDisplay(range, month) {
 
 export function summaryCards(summary, currency, counts) {
   const items = [
-    ['hero', '净收支', summary.net, 'wallet', '收入 − 支出'],
-    ['expense', '总支出', summary.expense, 'expense', `${counts.expense} 笔支出`],
-    ['income', '总收入', summary.income, 'income', `${counts.income} 笔收入`]
+    ['net', '净收支', summary.net, '收入 − 支出'],
+    ['expense', '总支出', summary.expense, `${counts.expense} 笔支出`],
+    ['income', '总收入', summary.income, `${counts.income} 笔收入`]
   ]
-  return `<div class="summary-grid">${items.map(([cls, label, amount, glyph, caption]) => `<article class="summary-card ${cls}">
-    <div class="summary-label">${label}<span class="card-icon ${cls}">${icon(glyph, 18)}</span></div>
-    <strong class="card-amount">${money(amount, currency)}</strong>
-    <p class="card-caption">${caption}</p>
-  </article>`).join('')}</div>`
+  return `<section class="stat-board" aria-label="收支汇总">${items.map(([cls, label, amount, caption]) => `<div class="stat-cell ${cls}">
+    <span class="stat-label">${label}</span>
+    <strong class="stat-value">${money(amount, currency)}</strong>
+    <span class="stat-note">${caption}</span>
+  </div>`).join('')}</section>`
 }
 
 export function trend(summary, range, currency, offset) {
@@ -146,13 +145,15 @@ export function transaction(entry, categories, reportCurrency, grouped = false) 
   const detail = grouped ? [time, entry.note !== title ? entry.note : ''].filter(Boolean).join(' · ')
     : `${tag} · ${entry.at.slice(5, 10).replace('-', '/')} ${time}`
   const converted = entry[reportCurrency === 'JPY' ? 'yen' : 'yuan']
-  const showConverted = reportCurrency !== entry.currency || converted !== entry.minor
+  const showConverted = (reportCurrency !== entry.currency || converted !== entry.minor) && entry.direction !== 'transfer'
+  // The report currency is already shown in the page controls, so only foreign amounts need a code.
+  const note = entry.currency !== reportCurrency || showConverted
+    ? `<small>${entry.currency}${showConverted ? ` · ${converted == null ? '待换算' : `约 ${money(converted, reportCurrency)}`}` : ''}</small>`
+    : ''
   return `<button type="button" class="transaction" data-action="edit" data-value="${escape(entry.id)}">
     ${categoryArt(category?.icon ?? (entry.direction === 'transfer' ? 'transfer' : 'tag'))}
-    <span><strong class="txn-title">${escape(title)}</strong><span class="txn-meta">${escape(detail)}</span></span>
-    <span class="txn-value ${entry.direction === 'income' ? 'benefit' : entry.direction === 'transfer' ? 'transfer' : ''}">${({ income: '+', expense: '−', transfer: '' })[entry.direction]}${money(entry.minor, entry.currency)}
-      <small>${entry.currency}${showConverted && entry.direction !== 'transfer' ? ` · ${converted == null ? '待换算' : `约 ${money(converted, reportCurrency)} ${reportCurrency}`}` : ''}</small>
-    </span></button>`
+    <span class="txn-body"><strong class="txn-title">${escape(title)}</strong><span class="txn-meta">${escape(detail)}</span></span>
+    <span class="txn-value ${entry.direction === 'income' ? 'benefit' : entry.direction === 'transfer' ? 'transfer' : ''}">${({ income: '+', expense: '−', transfer: '' })[entry.direction]}${money(entry.minor, entry.currency)}${note}</span></button>`
 }
 
 export function emptyLedger(isFiltered) {
