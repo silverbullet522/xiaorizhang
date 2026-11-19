@@ -1,6 +1,34 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { parseScreenText } from '../dist/screen.mjs'
+import { likelyDuplicate, parseScreenText, suggestCategory } from '../dist/screen.mjs'
+
+const categories = [
+  { id: 'food', parentId: null, direction: 'expense' }, { id: 'food-1', parentId: 'food', direction: 'expense' },
+  { id: 'food-2', parentId: 'food', direction: 'expense' }, { id: 'travel-0', parentId: 'travel', direction: 'expense' },
+  { id: 'salary', parentId: null, direction: 'income' }
+]
+
+test('同一商户沿用上次的分类，否则按商户关键词推测', () => {
+  const entries = [
+    { note: '小店咖啡', direction: 'expense', categoryId: 'food-2', at: '2026-11-01T09:00:00' },
+    { note: '小店 咖啡', direction: 'expense', categoryId: 'food-1', at: '2026-11-10T09:00:00' }
+  ]
+  assert.equal(suggestCategory({ note: '小店咖啡', direction: 'expense' }, '', entries, categories), 'food-1')
+  assert.equal(suggestCategory({ note: 'ローソン 新宿店', direction: 'expense' }, '', [], categories), 'food-2')
+  assert.equal(suggestCategory({ note: '', direction: 'expense' }, 'モバイルSuica\nチャージ ¥3,000', [], categories), 'travel-0')
+  assert.equal(suggestCategory({ note: 'Blue Coffee', direction: 'income' }, '', [], categories), null)
+  assert.equal(suggestCategory({ note: '某某商店', direction: 'expense' }, '', [], categories), null)
+})
+
+test('相同金额和时间相近的流水视为可能重复', () => {
+  const entries = [{ currency: 'JPY', minor: 1280, direction: 'expense', at: '2026-11-19T12:30:00', createdAt: '2026-11-19T03:31:00.000Z' }]
+  const draft = { amount: '1280', currency: 'JPY', direction: 'expense', at: '2026-11-19T12:36:00' }
+  assert.equal(likelyDuplicate(draft, entries), entries[0])
+  assert.equal(likelyDuplicate({ ...draft, at: '2026-11-19T13:00:00' }, entries), null)
+  assert.equal(likelyDuplicate({ ...draft, at: null }, entries, Date.parse('2026-11-19T03:50:00Z')), entries[0])
+  assert.equal(likelyDuplicate({ ...draft, at: null }, entries, Date.parse('2026-11-19T05:00:00Z')), null)
+  assert.equal(likelyDuplicate({ ...draft, currency: null }, entries), null)
+})
 
 test('优先提取人民币实付金额、商户和完整的付款时间', () => {
   const text = [

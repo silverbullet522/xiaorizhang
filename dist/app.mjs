@@ -8,7 +8,7 @@ import {
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
-import { parseScreenText, screenTextLimit } from './screen.mjs'
+import { likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
   brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
@@ -24,7 +24,10 @@ const state = {
 }
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+const phone = standalone || matchMedia('(pointer: coarse)').matches
 let importState
+let hiddenAt = 0
+let pasteTimer
 let pendingBackup
 let noticeTimer
 let ratesTask
@@ -286,9 +289,18 @@ const screenReview = {
   missing: '没有找到明确的金额，请对照付款或收款页面填写。'
 }
 
+function screenNotice(screen) {
+  const duplicate = likelyDuplicate(screen, state.entries)
+  if (!duplicate) return `<p class="screen-review">${icon('scan', 18)}<span>${screenReview[screen.status]}</span></p>`
+  const category = state.categories.find(item => item.id === duplicate.categoryId)
+  const when = `${Number(duplicate.at.slice(5, 7))}月${Number(duplicate.at.slice(8, 10))}日 ${duplicate.at.slice(11, 16)}`
+  return `<p class="screen-review warn">${icon('scan', 18)}<span>可能已经记过：${when} · ${escape(duplicate.note || category?.name || '未分类')} ${money(duplicate.minor, duplicate.currency)}。确认不是同一笔再保存。</span></p>`
+}
+
 function openEntry(id, screen) {
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
+  hidePaste()
   const at = entry?.at ?? screen?.at ?? tokyoNow()
   const currency = entry?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
   const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
@@ -299,7 +311,7 @@ function openEntry(id, screen) {
     <span>${label}</span></label>`).join('')
   openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
     <div class="entry-content">
-    ${screen ? `<p class="screen-review">${icon('scan', 18)}<span>${screenReview[screen.status]}</span></p>` : ''}
+    ${screen ? screenNotice(screen) : ''}
     <div class="entry-toolbar">
       <fieldset class="entry-modes"><legend class="sr-only">收支类型</legend>${directionChoices}</fieldset>
       <div class="entry-clock">
@@ -329,7 +341,7 @@ function openEntry(id, screen) {
     ${errorPlaceholder}</div>
     ${keypad(entry || screen)}</form>`, 'entry')
   const form = byId('entry-form')
-  selectCategories(form, entry?.categoryId)
+  selectCategories(form, entry?.categoryId ?? screen?.categoryId)
   updateEntryCurrency(form)
   refreshEntryQuote(form, true)
 }
@@ -391,9 +403,10 @@ function entryDraft(form) {
 function openScreenGuide() {
   openDialog('配置 iPhone 快捷指令', `<div class="form-grid">
     <ol class="setup-steps">
-      <li>在「快捷指令」新建「小日账·屏幕记账」。依次添加「截屏」（Take Screenshot）、「从图像提取文本」（Extract Text from Image）、「拷贝至剪贴板」（Copy to Clipboard）。后两步分别使用上一步的结果。</li>
+      <li>在「快捷指令」新建「小日账·屏幕记账」，依次添加「截屏」（Take Screenshot）、「从图像提取文本」（Extract Text from Image）、「拷贝至剪贴板」（Copy to Clipboard）、「前往主屏幕」（Go to Home Screen）。中间两步分别使用上一步的结果。</li>
       <li>在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。</li>
-      <li>在付款或收款详情上轻点背面两下，再打开主屏幕的小日账，点顶部扫描图标「粘贴屏幕账单」。如果 iPhone 弹出「粘贴」，轻点允许。核对后保存。</li>
+      <li>在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。</li>
+      <li>金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。</li>
     </ol>
     <div class="form-footer">
       <a class="button leading" href="shortcuts://create-shortcut">打开快捷指令</a>
@@ -401,10 +414,11 @@ function openScreenGuide() {
     </div></div>`)
 }
 
-function showScreenInput() {
+function showScreenInput(unread = false) {
+  hidePaste()
   openDialog('屏幕记账', `<form id="screen-form" class="form-grid">
-    <p class="fine">在付款或收款页面运行捷径后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。</p>
-    ${field('识别出的文字', `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="粘贴捷径识别出的账单文字" spellcheck="false"></textarea>`)}
+    <p class="fine">${unread ? '没有读到剪贴板里的账单文字。' : ''}在付款或收款页面运行快捷指令后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。</p>
+    ${field('识别出的文字', `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="粘贴快捷指令识别出的账单文字" spellcheck="false"></textarea>`)}
     ${errorPlaceholder}
     <div class="form-footer">
       ${button('screen-guide', '配置轻点背面', '', '', 'leading')}
@@ -415,10 +429,33 @@ function showScreenInput() {
 
 function applyScreenText(text) {
   if (!text.trim()) {
-    formError('这里还没有账单文字。运行捷径后再粘贴。')
+    formError('这里还没有账单文字。运行快捷指令后再粘贴。')
     return
   }
-  openEntry(null, parseScreenText(text))
+  const draft = parseScreenText(text)
+  openEntry(null, { ...draft, categoryId: suggestCategory(draft, text, state.entries, state.categories) })
+}
+
+// Read the clipboard inside the tap itself; only show the manual paste form when that fails.
+async function pasteFromScreen() {
+  hidePaste()
+  let text = ''
+  try { text = await navigator.clipboard.readText() } catch { /* Denied, unsupported, or the paste prompt was dismissed. */ }
+  if (dialog.open) return
+  if (text.trim()) applyScreenText(text)
+  else showScreenInput(true)
+}
+
+function hidePaste() {
+  clearTimeout(pasteTimer)
+  byId('quick-paste').hidden = true
+}
+
+function offerPaste() {
+  if (!phone || dialog.open) return
+  byId('quick-paste').hidden = false
+  clearTimeout(pasteTimer)
+  pasteTimer = setTimeout(hidePaste, 12000)
 }
 
 async function readScreenClipboard() {
@@ -700,8 +737,9 @@ const actions = {
     selectCategories(form, value)
     Array.from(group.children).find(item => item.dataset.value === value)?.focus({ preventScroll: true })
   },
-  'screen-paste': () => { showScreenInput(); return readScreenClipboard() },
-  'screen-input': showScreenInput,
+  'screen-paste': pasteFromScreen,
+  'dismiss-paste': hidePaste,
+  'screen-input': () => showScreenInput(),
   'screen-read': readScreenClipboard,
   'screen-guide': openScreenGuide,
   'delete-entry': async ({ value }) => {
@@ -873,15 +911,24 @@ function updateConnectivity() {
 window.addEventListener('online', updateConnectivity)
 window.addEventListener('offline', updateConnectivity)
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) reload().then(() => refreshRates()).catch(handleError)
+  if (document.hidden) { hiddenAt = Date.now(); hidePaste(); return }
+  // Coming back from another app usually means a shortcut just copied a payment screen.
+  if (Date.now() - hiddenAt > 1500) offerPaste()
+  reload().then(() => refreshRates()).catch(handleError)
+})
+document.addEventListener('pointerdown', event => {
+  if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()
 })
 setInterval(() => {
   if (!document.hidden && navigator.onLine) refreshRates().catch(handleError)
 }, 5 * 60 * 1000)
 
 async function start() {
+  byId('quick-paste').innerHTML = `<button type="button" class="quick-paste-main" data-action="screen-paste">${icon('scan', 18)}粘贴屏幕账单</button>
+    <button type="button" class="quick-paste-close" data-action="dismiss-paste" aria-label="关闭">${icon('close', 16)}</button>`
   try {
     await reload()
+    offerPaste()
     refreshRates().catch(handleError)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {

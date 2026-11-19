@@ -97,6 +97,52 @@ function screenTimestamp(lines) {
   return Number.isNaN(absolute.getTime()) ? null : tokyoNow(absolute)
 }
 
+// Default subcategory ids paired with merchant keywords; the first match wins.
+const keywordCategories = [
+  ['food-1', /咖啡|coffee|caf[eé]|カフェ|珈琲|コーヒー|スターバックス|starbucks|ドトール|タリーズ|瑞幸|luckin|奶茶|喜茶|蜜雪/iu],
+  ['food-2', /コンビニ|セブン-?イレブン|7-?eleven|ローソン|lawson|ファミリーマート|ファミマ|familymart|全家|罗森|便利店|超市|スーパー|イオン|\baeon\b|西友|まいばすけっと|盒马|永辉/iu],
+  ['food-0', /餐厅|饭店|食堂|レストラン|ラーメン|寿司|居酒屋|焼肉|牛丼|吉野家|すき家|松屋|マクドナルド|mcdonald|麦当劳|肯德基|\bkfc\b|美团外卖|饿了么|uber ?eats|restaurant/iu],
+  ['travel-1', /タクシー|\btaxi\b|出租车|滴滴|\bdidi\b|\buber\b(?! ?eats)/iu],
+  ['travel-2', /航空|机票|airlines?|ジェットスター/iu],
+  ['travel-0', /suica|pasmo|icoca|\bjr\b|地下鉄|メトロ|\bmetro\b|地铁|公交|巴士|バス|鉄道|railway|新幹線|12306/iu],
+  ['shopping-0', /ユニクロ|uniqlo|\bzara\b|しまむら|优衣库/iu],
+  ['shopping-1', /ダイソー|daiso|ドラッグ|マツモトキヨシ|ウエルシア|スギ薬局|ツルハ|無印|无印|\bmuji\b|ニトリ|ロフト|药妆/iu],
+  ['shopping-2', /ビックカメラ|ヨドバシ|bic ?camera|yodobashi|京东|数码/iu],
+  ['home-1', /電気料金|电费|ガス料金|燃气|水道|水费|宽带/iu],
+  ['health-0', /病院|クリニック|医院|诊所|薬局|药店|药房|pharmacy|clinic|hospital/iu],
+  ['fun-0', /映画|电影|cinema|netflix|spotify|steam|nintendo|カラオケ|\bktv\b/iu]
+]
+const sameNote = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')
+
+// Prefer the category last used for the same merchant, then a keyword match on the merchant or the whole screen.
+export function suggestCategory(draft, text, entries, categories) {
+  const usable = id => categories.some(item => item.id === id && item.direction === draft.direction)
+  const note = sameNote(draft.note)
+  if (note) {
+    const previous = entries.filter(entry => entry.direction === draft.direction && entry.categoryId && sameNote(entry.note) === note)
+      .reduce((latest, entry) => !latest || entry.at > latest.at ? entry : latest, null)
+    if (previous && usable(previous.categoryId)) return previous.categoryId
+  }
+  if (draft.direction !== 'expense') return null
+  for (const source of [draft.note, String(text ?? '').slice(0, screenTextLimit).normalize('NFKC')]) {
+    if (!source) continue
+    const match = keywordCategories.find(([id, pattern]) => pattern.test(source) && usable(id))
+    if (match) return match[0]
+  }
+  return null
+}
+
+const stamp = at => Date.parse(at + 'Z')
+
+// A matching amount near the screen's time, or saved in the last half hour, is probably the same payment.
+export function likelyDuplicate(draft, entries, now = Date.now()) {
+  if (!draft.currency || !draft.amount) return null
+  const minor = amountMinor(draft.amount, draft.currency)
+  if (!minor) return null
+  return entries.find(entry => entry.currency === draft.currency && entry.minor === minor && entry.direction === draft.direction &&
+    (draft.at ? Math.abs(stamp(entry.at) - stamp(draft.at)) <= 10 * 60000 : now - Date.parse(entry.createdAt) <= 30 * 60000)) ?? null
+}
+
 export function parseScreenText(input) {
   const lines = String(input ?? '').slice(0, screenTextLimit).normalize('NFKC')
     .replace(/[−–﹣]/g, '-').split(/\r?\n|\r/u).map(line => line.trim()).filter(Boolean)
