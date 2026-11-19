@@ -631,20 +631,24 @@ dialog.addEventListener('input', event => {
 byId('file-import').addEventListener('change', async event => {
   const file = event.target.files?.[0]
   if (!file) return
-  event.target.value = ''
-  openDialog('导入账单', '<p class="fine">正在读取文件…</p>')
+  openDialog('导入账单', '<p id="import-loading" class="fine">正在读取文件…</p>')
+  const indicator = byId('import-loading')
   try {
-    importState = { file: await readFile(file), overrides: new Map() }
-    if (dialog.open) chooseSheet(importState.file.sheetNames[0])
+    const parsed = await readFile(file)
+    if (dialog.open && byId('import-loading') === indicator) {
+      importState = { file: parsed, overrides: new Map() }
+      chooseSheet(parsed.sheetNames[0])
+    }
   } catch (error) {
-    if (dialog.open) openDialog('导入账单', `<p class="form-error">${escape(error.message || '无法读取这个表格。')}</p>`)
-  }
+    if (dialog.open && byId('import-loading') === indicator) {
+      openDialog('导入账单', `<p class="form-error">${escape(error.message || '无法读取这个表格。')}</p>`)
+    }
+  } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
 
 byId('file-backup').addEventListener('change', async event => {
   const file = event.target.files?.[0]
   if (!file) return
-  event.target.value = ''
   try {
     if (file.size > 32 * 1024 * 1024) throw new Error('备份文件超过 32 MB。')
     pendingBackup = validateBackup(JSON.parse(await file.text()))
@@ -654,7 +658,7 @@ byId('file-backup').addEventListener('change', async event => {
       ${errorPlaceholder}<div class="form-footer">${cancelButton}${button('confirm-restore', '替换并恢复', '', '', 'danger')}</div></div>`)
   } catch {
     openDialog('恢复备份', '<p class="form-error">无法读取备份。请选择由小日账导出的有效 JSON 文件。</p>')
-  }
+  } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
 
 function updateConnectivity() {
