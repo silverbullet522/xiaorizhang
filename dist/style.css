@@ -337,8 +337,12 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--green) }
   .dialog-top { padding-inline: 14px }
   .dialog-content { padding: 13px 14px 19px }
   .entry-sheet[open] { width: 100%; border-inline: 0; border-radius: 23px 23px 0 0 }
-  .entry-sheet .dialog-top { padding: 7px 14px }
-  .entry-content { padding-inline: 13px }
+  .entry-sheet .dialog-top { padding: 6px 14px }
+  .entry-content { padding: 4px 13px 8px; gap: 6px }
+  .entry-amount input { height: 50px }
+  .entry-cat { min-height: 55px }
+  .entry-cat .category-icon { width: 29px; height: 29px }
+  .category-children .entry-cat { min-height: 53px }
   .entry-footer { padding-inline: 13px }
   .entry-keypad { padding-inline: 11px }
   #notice { bottom: calc(65px + env(safe-area-inset-bottom)) }
