@@ -379,6 +379,8 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 /* Budgets and recurring bills */
 .feature-panel { margin-block: 14px }
 .book-digest > .feature-panel { margin-bottom: 0 }
+.feature-category-toggle { width: 100%; max-width: none }
+.entry-footer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 8px }
 .feature-row {
   display: flex; width: 100%; min-height: 44px; gap: 8px; align-items: center; padding: 9px 0;
   border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); text-align: left;

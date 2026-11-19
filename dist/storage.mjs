@@ -185,6 +185,7 @@ export const saveCurrency = currency => transact(['settings'], 'readwrite', stor
 
 function featureConflict(list, item, others) {
   if (list === 'budgets') return others.some(value => value.categoryId === item.categoryId && value.currency === item.currency)
+  if (list === 'bills') return Boolean(item.sourceEntryId && others.some(value => value.sourceEntryId === item.sourceEntryId))
   if (list === 'merchants') {
     const keys = new Set([item.name, ...item.aliases].map(merchantKey).filter(Boolean))
     return others.some(value => [value.name, ...value.aliases].some(alias => keys.has(merchantKey(alias))))

@@ -34,14 +34,17 @@ export function validFeature(list, item, categories) {
   }
   if (!validAmount(minor)) return null
   if (list === 'budgets') {
-    return direction === 'expense' && ['JPY', 'CNY'].includes(currency) ? { id, categoryId, minor, currency } : null
+    return (categoryId === null || direction === 'expense') && ['JPY', 'CNY'].includes(currency) ? { id, categoryId, minor, currency } : null
   }
   if (list === 'bills') {
-    const { start, next, cycle } = item
+    const { start, next, cycle, anchor, sourceEntryId } = item
     if (!text(name, 120) || !name.trim() || !Object.hasOwn(currencies, currency) || !isDay(start) ||
         (next !== null && (!isDay(next) || next < start)) || !billCycles.includes(cycle) ||
-        (categoryId !== null && direction !== 'expense')) return null
-    return { id, name: name.trim(), categoryId, currency, minor, start, next, cycle }
+        (categoryId !== null && direction !== 'expense') ||
+        (anchor !== undefined && (!isDay(anchor) || anchor > start)) ||
+        (sourceEntryId !== undefined && !validId(sourceEntryId))) return null
+    return { id, name: name.trim(), categoryId, currency, minor, start, next, cycle,
+      ...(anchor ? { anchor } : {}), ...(sourceEntryId ? { sourceEntryId } : {}) }
   }
   return null
 }
@@ -66,12 +69,20 @@ export function nextBillDate(bill, due) {
     const next = offsetDate(due, 7)
     return isDay(next) ? next : null
   }
+  const anchor = bill.anchor ?? bill.start
   const month = bill.cycle === 'monthly'
     ? offsetDate(monthBounds(due.slice(0, 7)).end, 1).slice(0, 7)
-    : String(Number(due.slice(0, 4)) + 1) + bill.start.slice(4, 7)
+    : String(Number(due.slice(0, 4)) + 1) + anchor.slice(4, 7)
   if (!/^\d{4}-\d{2}$/.test(month)) return null
   const last = monthBounds(month).end
-  return month + '-' + (bill.start.slice(8) < last.slice(8) ? bill.start.slice(8) : last.slice(8))
+  return month + '-' + (anchor.slice(8) < last.slice(8) ? anchor.slice(8) : last.slice(8))
+}
+
+export function nextFutureBillDate(sourceDay, today, cycle) {
+  const schedule = { start: sourceDay, cycle }
+  let next = nextBillDate(schedule, sourceDay)
+  while (next && next <= today) next = nextBillDate(schedule, next)
+  return next
 }
 
 export const billKey = (id, due) => 'recurring:' + id + ':' + due
@@ -90,7 +101,7 @@ export function budgetUsage(entries, categories, budgets, month) {
     let spent = 0
     let pending = 0
     for (const entry of inMonth) {
-      if (entry.categoryId !== budget.categoryId && parents.get(entry.categoryId) !== budget.categoryId) continue
+      if (budget.categoryId !== null && entry.categoryId !== budget.categoryId && parents.get(entry.categoryId) !== budget.categoryId) continue
       if (entry[key] == null) pending++
       else spent += entry[key]
     }

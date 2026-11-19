@@ -8,7 +8,7 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
-import { billCycles, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv } from './features.mjs'
+import { billCycles, billKey, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, nextFutureBillDate } from './features.mjs'
 import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
@@ -199,17 +199,12 @@ function ledgerCategoryButtonContent() {
     <span class="ledger-category-label">${escape(label)}</span>${icon('down', 14)}`
 }
 
-function ledgerCategoryChoices() {
-  const selected = state.categories.find(item => item.id === state.ledgerCategory)
+function categoryChoiceGroups(shown, selectedId, action, childrenId) {
+  const selected = state.categories.find(item => item.id === selectedId)
   const rootId = selected?.parentId ?? selected?.id
-  const shown = state.ledgerDirection === 'all' ? ['expense', 'income'] : [state.ledgerDirection]
   const parentIds = new Set(state.categories.map(item => item.parentId))
-  const pick = (item, active, disclosure) => categoryTile(item, active, 'ledger-category-pick', disclosure)
-  const shortcuts = [
-    pick({ id: '*', name: t('全部分类'), icon: 'shapes' }, state.ledgerCategory === null),
-    pick({ id: '', name: t('未分类'), icon: 'tag' }, state.ledgerCategory === '')
-  ].join('')
-  const groups = shown.map(direction => {
+  const pick = (item, active, disclosure) => categoryTile(item, active, action, disclosure)
+  return shown.map(direction => {
     const roots = topCategories(direction)
     if (!roots.length) return ''
     const root = roots.find(item => item.id === rootId)
@@ -218,11 +213,20 @@ function ledgerCategoryChoices() {
       ${shown.length > 1 ? `<h3>${directionLabel(direction)}</h3>` : ''}
       <div class="category-strip" role="group" aria-label="${t('{0}一级分类', directionLabel(direction))}">
         ${roots.map(item => pick(item, item.id === rootId, parentIds.has(item.id) ? ` aria-expanded="${item.id === rootId}"` : '')).join('')}
-        ${kids.length ? `<div id="ledger-filter-children" class="category-children" role="group" aria-label="${t('{0}的二级分类', escape(categoryName(root)))}">
-          ${kids.map(item => pick(item, item.id === state.ledgerCategory)).join('')}</div>` : ''}
+        ${kids.length ? `<div id="${childrenId}" class="category-children" role="group" aria-label="${t('{0}的二级分类', escape(categoryName(root)))}">
+          ${kids.map(item => pick(item, item.id === selectedId)).join('')}</div>` : ''}
       </div></div>`
   }).join('')
-  return `<div class="category-strip" role="group" aria-label="${t('快捷分类')}">${shortcuts}</div>${groups}`
+}
+
+function ledgerCategoryChoices() {
+  const shown = state.ledgerDirection === 'all' ? ['expense', 'income'] : [state.ledgerDirection]
+  const shortcuts = [
+    categoryTile({ id: '*', name: t('全部分类'), icon: 'shapes' }, state.ledgerCategory === null, 'ledger-category-pick'),
+    categoryTile({ id: '', name: t('未分类'), icon: 'tag' }, state.ledgerCategory === '', 'ledger-category-pick')
+  ].join('')
+  return `<div class="category-strip" role="group" aria-label="${t('快捷分类')}">${shortcuts}</div>
+    ${categoryChoiceGroups(shown, state.ledgerCategory, 'ledger-category-pick', 'ledger-filter-children')}`
 }
 
 function ledgerResults() {
@@ -528,7 +532,7 @@ function placeCategoryChildren(strip) {
 }
 
 window.addEventListener('resize', () => {
-  const strip = dialog.querySelector('.category-strip')
+  const strip = dialog.querySelector('.category-strip > .category-children')?.parentElement
   if (dialog.open && strip) placeCategoryChildren(strip)
   placeLedgerCategoryChildren()
 })
@@ -683,7 +687,8 @@ function openEntry(id, screen, scheduled) {
       <label><span class="sr-only">${t('备注')}</span><textarea name="note" maxlength="500" rows="1" placeholder="${t('填写备注')}">${escape(entry?.note ?? screen?.note ?? bill?.name ?? '')}</textarea></label>
       ${entry ? icoButton('delete-entry', 'trash', t('删除流水'), `data-value="${entry.id}"`) : ''}
     </div>
-    ${bill ? '' : `<label class="switch-line"><input type="checkbox" name="rememberMerchant">${t('记住此商户的分类')}</label>`}
+    ${bill ? '' : `<div class="entry-footer-actions"><label class="switch-line"><input type="checkbox" name="rememberMerchant">${t('记住此商户的分类')}</label>
+      ${entry?.direction === 'expense' ? button('bill-from-entry', t('设为固定账单'), `data-value="${escape(entry.id)}"`, 'calendar', 'subtle') : ''}</div>`}
     ${errorPlaceholder}</div>
     ${keypad(entry || screen || bill)}</form>`, 'entry')
   const form = byId('entry-form')
@@ -866,24 +871,38 @@ async function refreshRates(showStatus = false) {
   if (showStatus) toast(updated ? t('已补齐 {0} 笔汇率', updated) : t('暂未获取到可补齐的参考汇率'))
 }
 
-const featureTitles = { merchants: '商户规则', budgets: '分类预算', bills: '固定账单' }
+const featureTitles = { merchants: '商户规则', total: '总预算', budgets: '分类预算', bills: '固定账单' }
 const cycleLabels = { weekly: '每周', monthly: '每月', yearly: '每年' }
 const todayTokyo = () => tokyoNow().slice(0, 10)
+const featureStore = list => list === 'total' ? 'budgets' : list
+const featureItems = list => featureStore(list) === 'budgets'
+  ? state.features.budgets.filter(item => (item.categoryId === null) === (list === 'total'))
+  : state.features[list]
 
 function budgetPanel() {
   if (!state.features.budgets.length) return ''
   const budgets = budgetUsage(state.entries, state.categories, state.features.budgets, state.month)
-  return `<section class="panel feature-panel"><div class="panel-head"><div><h2>${t('分类预算')}</h2>
-    <p>${formatDate(state.month, 'month')}</p></div>${button('manage-feature', t('管理'), 'data-value="budgets"', '', 'subtle')}</div>
-    <ul class="feature-list">${budgets.map(budget => {
+  return budgetSection('total', budgets.filter(item => item.categoryId === null)) +
+    budgetSection('budgets', budgets.filter(item => item.categoryId !== null))
+}
+
+function budgetSection(list, budgets) {
+  if (!budgets.length && list !== 'total') return ''
+  const title = t(featureTitles[list])
+  const control = budgets.length ? button('manage-feature', t('管理'), `data-value="${list}"`, '', 'subtle')
+    : button('edit-feature', t('设置'), 'data-list="total"', '', 'subtle')
+  return `<section class="panel feature-panel"><div class="panel-head"><div><h2>${title}</h2>
+    <p>${formatDate(state.month, 'month')}</p></div>${control}</div>
+    ${budgets.length ? `<ul class="feature-list">${budgets.map(budget => {
       const amount = value => money(value, budget.currency)
-      const label = importCategoryLabel(budget.categoryId)
-      return `<li><div class="feature-amount"><strong>${escape(label)}</strong><span>${amount(budget.minor)} ${budget.currency}</span></div>
-        <progress aria-label="${escape(label)}" max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
+      const label = list === 'total' ? title : importCategoryLabel(budget.categoryId)
+      return `<li><div class="feature-amount"><strong>${escape(list === 'total' ? budget.currency : label)}</strong>
+        <span>${amount(budget.minor)}${list === 'total' ? '' : ` ${budget.currency}`}</span></div>
+        <progress aria-label="${escape(label + ' · ' + budget.currency)}" max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
         <small>${t('已用 {0}', amount(budget.spent))} · ${budget.remaining < 0
           ? t('超出 {0}', amount(-budget.remaining)) : t('剩余 {0}', amount(budget.remaining))}
           ${budget.pending ? ` · ${t('{0} 笔待换算', budget.pending)}` : ''}</small></li>`
-    }).join('')}</ul></section>`
+    }).join('')}</ul>` : ''}</section>`
 }
 
 function dueBills() {
@@ -906,9 +925,9 @@ function billsPanel() {
 
 function manageFeature(list) {
   if (!Object.hasOwn(featureTitles, list)) return
-  const rows = state.features[list].map(item => {
+  const rows = featureItems(list).map(item => {
     const category = item.categoryId ? importCategoryLabel(item.categoryId) : ''
-    const title = list === 'budgets' ? category : item.name || item.aliases[0]
+    const title = list === 'total' ? item.currency : list === 'budgets' ? category : item.name || item.aliases[0]
     const sub = list === 'merchants' ? [...item.aliases, category].filter(Boolean).join(' · ')
       : [money(item.minor, item.currency) + ' ' + item.currency,
         list === 'bills' ? [t(cycleLabels[item.cycle]), item.next ? t('下次日期 {0}', dayLabel(item.next)) : '', category].filter(Boolean).join(' · ') : ''].filter(Boolean).join(' · ')
@@ -919,46 +938,107 @@ function manageFeature(list) {
     <div class="form-footer">${button('edit-feature', t('添加'), `data-list="${list}"`, 'plus', 'primary')}</div></div>`)
 }
 
-function featureCategoryOptions(selected, expenseOnly, required) {
-  const groups = (expenseOnly ? ['expense'] : ['expense', 'income']).map(direction => {
+function merchantCategoryOptions(selected) {
+  const groups = ['expense', 'income'].map(direction => {
     const items = topCategories(direction).flatMap(root => [root, ...children(root.id)])
     return `<optgroup label="${directionLabel(direction)}">${items.map(item =>
       option(item.id, importCategoryLabel(item.id), selected)).join('')}</optgroup>`
   }).join('')
-  return option('', t(required ? '选择分类' : '未分类'), selected) + groups
+  return option('', t('未分类'), selected) + groups
 }
 
-function featureForm(list, id) {
+function featureCategoryLabel(value, optional) {
+  const selected = state.categories.find(item => item.id === value && item.direction === 'expense')
+  const label = selected ? importCategoryLabel(selected.id) : t(optional ? '未分类' : '选择分类')
+  return `${selected ? categoryArt(selected.icon, 17, selected.name) : icon('tag', 17)}
+    <span id="feature-category-value" class="ledger-category-label">${escape(label)}</span>${icon('down', 14)}`
+}
+
+function featureCategoryPicker(value, optional) {
+  return `<div class="feature-category form-field" data-optional="${optional}">
+    <span id="feature-category-label">${t('分类')}</span>
+    <input type="hidden" name="category" value="${escape(value)}">
+    <button type="button" class="ledger-category-toggle feature-category-toggle" data-action="feature-categories-toggle"
+      aria-labelledby="feature-category-label feature-category-value" aria-controls="feature-category-picker" aria-expanded="false">${featureCategoryLabel(value, optional)}</button>
+    <section id="feature-category-picker" class="ledger-category-picker" aria-labelledby="feature-picker-title" hidden>
+      <div class="ledger-picker-head"><h3 id="feature-picker-title">${t('选择分类')}</h3>
+        ${button('feature-categories-close', t('完成'), '', '', 'subtle')}</div>
+      <div class="ledger-category-options"></div>
+    </section></div>`
+}
+
+function setFeatureCategoriesOpen(picker, open) {
+  const trigger = picker.querySelector('.feature-category-toggle')
+  const panel = picker.querySelector('.ledger-category-picker')
+  const options = picker.querySelector('.ledger-category-options')
+  const value = picker.querySelector('[name="category"]').value
+  const optional = picker.dataset.optional === 'true'
+  trigger.innerHTML = featureCategoryLabel(value, optional)
+  trigger.setAttribute('aria-expanded', String(open))
+  panel.hidden = !open
+  if (!open) {
+    options.innerHTML = ''
+    trigger.focus({ preventScroll: true })
+    return
+  }
+  const scroll = options.scrollTop
+  options.innerHTML = (optional ? `<div class="category-strip">${categoryTile({ id: '', name: t('未分类'), icon: 'tag' }, !value, 'feature-category-pick')}</div>` : '') +
+    categoryChoiceGroups(['expense'], value, 'feature-category-pick', 'feature-filter-children')
+  const children = options.querySelector('.category-children')
+  if (children) placeCategoryChildren(children.parentElement)
+  options.scrollTop = scroll
+}
+
+function featureForm(list, id, source) {
   if (!Object.hasOwn(featureTitles, list)) return
-  const item = state.features[list].find(rule => rule.id === id)
+  const item = featureItems(list).find(rule => rule.id === id)
   if (id && !item) return
   const merchant = list === 'merchants'
   const bill = list === 'bills'
-  const currency = item?.currency ?? state.currency
-  const category = field(t('分类'), `<select name="category" ${list === 'budgets' ? 'required' : ''}>
-    ${featureCategoryOptions(item?.categoryId ?? '', !merchant, list === 'budgets')}</select>`)
+  const currency = item?.currency ?? source?.currency ?? state.currency
+  const categoryId = item?.categoryId ?? source?.categoryId ?? ''
+  const category = list === 'total' ? '' : merchant ? selectField(t('分类'), 'category', merchantCategoryOptions(categoryId))
+    : featureCategoryPicker(categoryId, bill)
+  const sourceDay = source?.at.slice(0, 10) ?? ''
+  const suggestedStart = sourceDay ? nextFutureBillDate(sourceDay, todayTokyo(), 'monthly') ?? '' : ''
+  const name = item?.name ?? (source ? (source.note.trim() || importCategoryLabel(source.categoryId)).slice(0, 120) : '')
+  const minStart = sourceDay ? offsetDate(sourceDay, 1) : '1900-01-01'
+  const start = item?.start ?? (source ? suggestedStart : todayTokyo())
   const currencies = bill ? currencyOptions(currency) : ['JPY', 'CNY'].map(code => option(code, code, currency)).join('')
   const nameField = field(t(merchant ? '商户显示名称（选填）' : '账单名称'),
-    `<input name="name" maxlength="120" value="${escape(item?.name ?? '')}" ${bill ? 'required' : ''}>`)
+    `<input name="name" maxlength="120" value="${escape(name)}" ${bill ? 'required' : ''}>`)
   const amountFields = `<div class="form-pair">${selectField(t('币种'), 'currency', currencies)}
-    ${field(t(list === 'budgets' ? '每月预算金额' : '金额'), `<input name="amount" inputmode="decimal" maxlength="24" value="${item ? amountText(item.minor, currency) : ''}" required>`)}</div>`
-  openDialog(t(featureTitles[list]), `<form id="feature-form" class="form-grid" data-list="${list}" data-id="${escape(id ?? '')}">
+    ${field(t(bill ? '金额' : '每月预算金额'), `<input name="amount" inputmode="decimal" maxlength="24" value="${item || source ? amountText((item ?? source).minor, currency) : ''}" required>`)}</div>`
+  openDialog(t(featureTitles[list]), `<form id="feature-form" class="form-grid" data-list="${list}" data-id="${escape(id ?? '')}"
+    data-source="${escape(source?.id)}" data-source-day="${sourceDay}" data-suggested-start="${suggestedStart}">
     ${merchant || bill ? nameField : ''}
     ${merchant ? field(t('商户别名（每行一个）'), `<textarea name="aliases" maxlength="12000" required>${escape(item?.aliases.join('\n') ?? '')}</textarea>`) : amountFields}
     ${bill ? `<div class="form-pair">${selectField(t('周期'), 'cycle', billCycles.map(cycle => option(cycle, t(cycleLabels[cycle]), item?.cycle ?? 'monthly')).join(''))}
-      ${field(t('首次扣款日'), `<input name="start" type="date" min="1900-01-01" max="9999-12-31" value="${item?.start ?? todayTokyo()}" required>`)}</div>` : ''}
+      ${field(t('首次扣款日'), `<input name="start" type="date" min="${minStart}" max="9999-12-31" value="${start}" required>`)}</div>` : ''}
     ${category}
     ${errorPlaceholder}<div class="form-footer">
       ${item ? button('remove-feature', t('删除'), '', 'trash', 'danger leading') : ''}
       ${button('manage-feature', t('返回'), `data-value="${list}"`)}${submitButton(t('保存'))}</div></form>`)
 }
 
+function billFromEntry(id) {
+  const entry = state.entries.find(item => item.id === id && item.direction === 'expense')
+  if (!entry) return
+  const existing = state.features.bills.find(bill => bill.sourceEntryId === entry.id || entry.sourceKey?.startsWith(billKey(bill.id, '')))
+  featureForm('bills', existing?.id, existing ? null : entry)
+}
+
 async function submitFeature(form) {
   const { list, id } = form.dataset
   const data = form.elements
-  const previous = state.features[list].find(item => item.id === id)
+  const previous = featureItems(list).find(item => item.id === id)
   if (id && !previous) { formError(t('设置已变化，请返回后重试。')); return }
-  const item = { id: id || crypto.randomUUID(), categoryId: data.category.value || null }
+  const item = { id: id || crypto.randomUUID(), categoryId: data.category?.value || null }
+  if (list === 'budgets' && !item.categoryId) {
+    formError(t('请选择预算分类。'))
+    form.querySelector('.feature-category-toggle').focus()
+    return
+  }
   if (list === 'merchants') {
     item.name = data.name.value.trim()
     item.aliases = data.aliases.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
@@ -969,12 +1049,17 @@ async function submitFeature(form) {
       item.name = data.name.value.trim()
       item.start = data.start.value
       item.cycle = data.cycle.value
+      const { source, sourceDay, suggestedStart } = form.dataset
+      if (sourceDay && item.start <= sourceDay) { formError(t('首次扣款日须晚于原流水日期。')); return }
+      item.sourceEntryId = previous?.sourceEntryId ?? (source || undefined)
+      if (item.start === previous?.start) item.anchor = previous.anchor
+      else if (sourceDay && item.start === suggestedStart) item.anchor = sourceDay
       item.next = item.start === previous?.start && item.cycle === previous?.cycle ? previous.next : item.start
     }
   }
-  const result = await saveFeature(list, item, previous)
+  const result = await saveFeature(featureStore(list), item, previous)
   if (result !== 'saved') {
-    formError(t(result === 'duplicate' ? '已有相同的商户或分类预算。'
+    formError(t(result === 'duplicate' ? (list === 'bills' ? '这笔流水已有固定账单。' : list === 'total' ? '该币种已有总预算。' : '已有相同的商户或分类预算。')
       : result === 'changed' ? '设置已变化，请返回后重试。' : '请检查填写的名称、分类、金额和日期。'))
     return
   }
@@ -985,7 +1070,7 @@ async function submitFeature(form) {
 async function removeFeature(form) {
   const { list, id } = form.dataset
   if (!id || !confirm(t('删除这项设置？'))) return
-  await deleteFeature(list, id)
+  await deleteFeature(featureStore(list), id)
   await reload()
   manageFeature(list)
 }
@@ -1008,7 +1093,7 @@ function settingsPage() {
       </section>
       <section class="panel settings-panel"><h2>${t('记账设置')}</h2>
         <div class="settings-rows">${Object.entries(featureTitles).map(([list, title]) => `<button class="settings-row" type="button" data-action="manage-feature" data-value="${list}">
-          ${icon(({ merchants: 'tag', budgets: 'chart', bills: 'calendar' })[list], 19)}<span>${t(title)}</span>${icon('right', 15)}</button>`).join('')}</div>
+          ${icon(({ merchants: 'tag', total: 'chart', budgets: 'chart', bills: 'calendar' })[list], 19)}<span>${t(title)}</span>${icon('right', 15)}</button>`).join('')}</div>
       </section>
       <section class="panel settings-panel"><h2>${t('屏幕记账')}</h2>
         <div class="settings-rows">${row('screen-guide', 'scan', t('配置屏幕记账'))}</div>
@@ -1547,6 +1632,27 @@ const actions = {
   'manage-feature': ({ value }) => manageFeature(value),
   'edit-feature': ({ list, value }) => featureForm(list, value),
   'remove-feature': (_, control) => removeFeature(control.form),
+  'feature-categories-toggle': (_, control) => {
+    const picker = control.closest('.feature-category')
+    const open = control.getAttribute('aria-expanded') === 'false'
+    setFeatureCategoriesOpen(picker, open)
+    if (open) picker.querySelector('.category-children [aria-pressed="true"], [data-action="feature-category-pick"][aria-expanded="true"]')
+      ?.scrollIntoView({ block: 'nearest' })
+  },
+  'feature-categories-close': (_, control) => setFeatureCategoriesOpen(control.closest('.feature-category'), false),
+  'feature-category-pick': ({ value }, control) => {
+    const picker = control.closest('.feature-category')
+    const hasChildren = control.hasAttribute('aria-expanded')
+    picker.querySelector('[name="category"]').value = value
+    setFeatureCategoriesOpen(picker, hasChildren)
+    if (hasChildren) {
+      const active = picker.querySelector('[aria-expanded="true"][data-action="feature-category-pick"]')
+      active?.focus({ preventScroll: true })
+      active?.scrollIntoView({ block: 'nearest' })
+      picker.querySelector('.category-children')?.firstElementChild?.scrollIntoView({ block: 'nearest' })
+    }
+  },
+  'bill-from-entry': ({ value }) => billFromEntry(value),
   'review-bill': ({ value, due }) => {
     const occurrence = dueBills().find(item => item.bill.id === value && item.due === due)
     if (occurrence) openEntry(null, null, occurrence)
@@ -1637,6 +1743,13 @@ dialog.addEventListener('change', event => {
     return
   }
   const form = control.form
+  if (form?.id === 'feature-form' && control.name === 'cycle' && form.dataset.sourceDay) {
+    if (form.elements.start.value === form.dataset.suggestedStart) {
+      const next = nextFutureBillDate(form.dataset.sourceDay, todayTokyo(), control.value) ?? ''
+      form.elements.start.value = form.dataset.suggestedStart = next
+    }
+    return
+  }
   if (form?.id === 'data-range-form') {
     if (control.name === 'month' && control.value) {
       const { start, end } = monthBounds(control.value)
@@ -1663,6 +1776,12 @@ dialog.addEventListener('change', event => {
 })
 
 dialog.addEventListener('keydown', event => {
+  const picker = event.target.closest('.feature-category')
+  if (event.key === 'Escape' && picker?.querySelector('.feature-category-toggle')?.getAttribute('aria-expanded') === 'true') {
+    event.preventDefault()
+    setFeatureCategoriesOpen(picker, false)
+    return
+  }
   if (event.key !== 'Enter' || !event.target.matches('.category-adder input')) return
   // Enter must not submit the entry; while an IME is composing it only confirms the text.
   event.preventDefault()

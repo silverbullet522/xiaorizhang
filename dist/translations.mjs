@@ -1,4 +1,10 @@
 export const messages = {
+  '总预算': ['總預算', '全体予算', 'Total budget'],
+  '设为固定账单': ['設為固定帳單', '定期支払いに設定', 'Set as recurring bill'],
+  '请选择预算分类。': ['請選擇預算分類。', '予算のカテゴリを選んでください。', 'Choose a budget category.'],
+  '首次扣款日须晚于原流水日期。': ['首次扣款日須晚於原流水日期。', '初回の支払日は元の明細の日付より後にしてください。', 'The first payment date must be after the original transaction.'],
+  '这笔流水已有固定账单。': ['這筆流水已有固定帳單。', 'この明細には既に定期支払いが設定されています。', 'This transaction already has a recurring bill.'],
+  '该币种已有总预算。': ['這個幣別已有總預算。', 'この通貨には既に全体予算があります。', 'A total budget already exists for this currency.'],
   '确认固定账单': ['確認固定帳單', '定期支払いを確認', 'Review recurring bill'],
   '记住此商户的分类': ['記住此商家的分類', 'このお店のカテゴリを記憶', 'Remember this merchant’s category'],
   '商户规则': ['商家規則', '店舗ルール', 'Merchant rules'],

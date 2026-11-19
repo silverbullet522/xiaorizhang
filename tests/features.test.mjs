@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { csvRows, duplicatePreviews, importRows } from '../dist/core.mjs'
-import { billKey, budgetUsage, findMerchantRule, firstUnpostedDate, ledgerCsv, nextBillDate } from '../dist/features.mjs'
+import { billKey, budgetUsage, findMerchantRule, firstUnpostedDate, ledgerCsv, nextBillDate, nextFutureBillDate, validFeature } from '../dist/features.mjs'
 
 test('PayPay 以交易明细区分同号付款和多笔退款，并可匹配旧流水', () => {
   const [headers, ...data] = csvRows([
@@ -46,6 +46,35 @@ test('固定账单在短月顺延到月末，下一月恢复原日期并跳过�
   assert.equal(firstUnpostedDate(bill, new Set([billKey(bill.id, bill.next)])), '2024-02-29')
   assert.equal(nextBillDate({ start: '2024-02-29', cycle: 'yearly' }, '2024-02-29'), '2025-02-28')
   assert.equal(nextBillDate({ cycle: 'weekly' }, '2024-02-28'), '2024-03-06')
+})
+
+test('总预算包含当月全部支出和未分类流水，分类预算仍只计算相关类别', () => {
+  const budgets = [
+    { id: 'total', categoryId: null, currency: 'JPY', minor: 2500 },
+    { id: 'food', categoryId: 'food', currency: 'JPY', minor: 2000 }
+  ]
+  const entries = [
+    expense('2026-03-03T10:00:00', 1000, 5000),
+    expense('2026-03-04T10:00:00', 1700, 8500, null),
+    expense('2026-03-05T10:00:00', null, 2500, null),
+    expense('2026-02-28T23:59:59', 4000, 20000, null),
+    { ...expense('2026-03-06T10:00:00', 800, 4000, null), direction: 'income' }
+  ]
+  const result = budgetUsage(entries, categories, budgets, '2026-03')
+  assert.deepEqual(result.map(item => [item.spent, item.remaining, item.pending]), [[2700, -200, 1], [1000, 1000, 0]])
+  assert.deepEqual(validFeature('budgets', budgets[0], new Map()), budgets[0])
+})
+
+test('从旧流水创建固定账单时跨过已过去的期次并保留原扣款日', () => {
+  const source = '2024-01-31'
+  assert.equal(nextFutureBillDate(source, '2024-02-01', 'monthly'), '2024-02-29')
+  assert.equal(nextFutureBillDate(source, '2024-02-29', 'monthly'), '2024-03-31')
+  assert.equal(nextFutureBillDate(source, '2024-02-07', 'weekly'), '2024-02-14')
+  const bill = { id: 'bill', categoryId: null, currency: 'JPY', minor: 1800, name: '网络费',
+    start: '2024-02-29', next: '2024-02-29', cycle: 'monthly', anchor: source, sourceEntryId: 'test-entry' }
+  const saved = validFeature('bills', bill, new Map())
+  assert.deepEqual(saved, bill)
+  assert.equal(nextBillDate(saved, saved.next), '2024-03-31')
 })
 
 test('CSV 保留原币金额、单元格引号与换行，并中和主动公式', () => {
