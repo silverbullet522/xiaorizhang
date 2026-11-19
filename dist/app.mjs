@@ -738,13 +738,12 @@ function entryDraft(form) {
 function openScreenGuide() {
   openDialog('配置 iPhone 快捷指令', `<div class="form-grid">
     <ol class="setup-steps">
-      <li>在「快捷指令」新建「小日账·屏幕记账」，依次添加「截屏」（Take Screenshot）、「从图像提取文本」（Extract Text from Image）、「拷贝至剪贴板」（Copy to Clipboard）、「前往主屏幕」（Go to Home Screen）。中间两步分别使用上一步的结果。</li>
+      <li>打开<a href="https://www.icloud.com/shortcuts/a3f25a035d3344d0b328a22d3a278ace" target="_blank" rel="noopener">屏幕记账快捷指令</a>，按提示添加。</li>
       <li>在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。</li>
       <li>在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。</li>
       <li>金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。</li>
     </ol>
     <div class="form-footer">
-      <a class="button leading" href="shortcuts://create-shortcut">打开快捷指令</a>
       ${button('screen-input', '返回屏幕记账')}
     </div></div>`)
 }
