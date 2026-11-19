@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, summarize, tokyoNow, withQuotes
+  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, presetRenames, summarize, tokyoNow, withQuotes
 } from '../dist/core.mjs'
+import { iconNames } from '../dist/icons.mjs'
 
 test('预设分类保留旧编号，子分类与上级同为一种收支', () => {
   const byId = new Map(defaults.map(item => [item.id, item]))
@@ -10,11 +11,16 @@ test('预设分类保留旧编号，子分类与上级同为一种收支', () =>
   const original = {
     'food-0': '正餐', 'food-1': '咖啡饮品', 'food-2': '食材零食', 'travel-0': '公共交通', 'travel-1': '打车', 'travel-2': '机票',
     'shopping-0': '服饰', 'shopping-1': '日用品', 'shopping-2': '数码', 'home-0': '房租', 'home-1': '水电网费',
-    'fun-0': '娱乐', 'fun-1': '旅行', 'health-0': '医疗', 'health-1': '运动',
+    'fun-1': '旅行', 'health-0': '医疗', 'health-1': '运动',
     'salary-0': '基本工资', 'salary-1': '奖金', 'extra-0': '副业', 'extra-1': '礼金'
   }
   for (const [id, name] of Object.entries(original)) assert.equal(byId.get(id)?.name, name)
   for (const item of defaults.filter(item => item.parentId)) assert.equal(byId.get(item.parentId).direction, item.direction)
+  // 休闲 became 娱乐 and its old 娱乐 child became 休闲; the ids stay put.
+  assert.equal(byId.get('fun').name, '娱乐')
+  assert.equal(byId.get('fun-0').name, '休闲')
+  for (const { id, to } of presetRenames) assert.equal(byId.get(id).name, to)
+  for (const item of defaults) assert.ok(iconNames.has(item.icon), item.icon)
 })
 
 test('东京时间和 Excel 日期不依赖设备时区', () => {

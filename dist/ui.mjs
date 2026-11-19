@@ -1,4 +1,5 @@
 import { currencies, directions, money, offsetDate } from './core.mjs'
+import { categoryIconPaths } from './icons.mjs'
 
 const paths = {
   logo: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 3v18m3-12h4m-4 4h4m-4 4h2"/>',
@@ -19,32 +20,16 @@ const paths = {
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   erase: '<path d="M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9L3 12zM12 9l6 6m0-6-6 6"/>',
   trash: '<path d="M4 7h16m-10 4v5m4-5v5m-8-9 1 13h10l1-13m-8 0V4h4v3"/>',
-  wallet: '<path d="M19 8V6a2 2 0 0 0-2-2H6a3 3 0 0 0 0 6h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H6a3 3 0 0 1-3-3V7"/><path d="M21 13h-5v3h5"/>',
   income: '<path d="M6 18 18 6M9 6h9v9"/>',
   expense: '<path d="M6 6l12 12m-9 0h9V9"/>',
-  transfer: '<path d="M4 8h15m-4-4 4 4-4 4m5 4H5m4-4-4 4 4 4"/>',
   chart: '<path d="M4 19h16M7 16v-4m5 4V8m5 8V4"/>',
-  bag: '<path d="M5 8h14l1 12H4zM9 9V6a3 3 0 0 1 6 0v3"/>',
-  coffee: '<path d="M4 8h13v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM17 9h2a2 2 0 0 1 0 4h-2M3 21h16M8 3v2m5-2v2"/>',
-  train: '<rect x="5" y="3" width="14" height="15" rx="3"/><path d="M5 11h14m-7-8v8m-4 7-2 3m10-3 2 3m-9-6h.01m6 0h.01"/>',
-  home: '<path d="m3 11 9-8 9 8m-2-2v10a2 2 0 0 1-2 2h-3v-6h-4v6H7a2 2 0 0 1-2-2V9"/>',
-  sparkle: '<path d="m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z"/>',
-  heart: '<path d="M20.8 8.8c0 4-5.4 8-8.8 11.1C8.6 16.8 3.2 12.8 3.2 8.8a4.8 4.8 0 0 1 8.8-2.4 4.8 4.8 0 0 1 8.8 2.4Z"/>',
-  sofa: '<path d="M5 11V8a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v3"/><path d="M3 13a2 2 0 0 1 4 0v2h10v-2a2 2 0 0 1 4 0v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M6 19v2m12-2v2"/>',
-  phone: '<rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
-  scissors: '<circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/><path d="M8.3 15.7 18 4M15.7 15.7 6 4"/>',
-  book: '<path d="M5 19.5v-15A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5 1.5 1.5 0 0 0 6.5 21H19v-3"/><path d="M9 7h6"/>',
-  chat: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4 4v-4h-.5A1.5 1.5 0 0 1 4 14.5z"/><path d="M8.5 10h.01M12 10h.01M15.5 10h.01" stroke-width="2.4"/>',
-  family: '<circle cx="9" cy="8" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9.5" r="2.3"/><path d="M15.5 14.2A4.5 4.5 0 0 1 21 18.5"/>',
-  paw: '<circle cx="6.5" cy="10.5" r="1.8"/><circle cx="10" cy="6.5" r="1.8"/><circle cx="14.5" cy="6.5" r="1.8"/><circle cx="18" cy="10.5" r="1.8"/><path d="M8.5 17.5c0-3 1.6-5 3.5-5s3.5 2 3.5 5c0 1.7-1.5 2.5-3.5 2.5s-3.5-.8-3.5-2.5z"/>',
-  car: '<path d="M5 12l2-5.2A2 2 0 0 1 8.9 5.5h6.2a2 2 0 0 1 1.9 1.3L19 12"/><path d="M3.5 12h17v4a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z"/><path d="M6 17v2m12-2v2M7 14.5h1.5m7 0H17"/>',
-  more: '<circle cx="12" cy="12" r="8.5"/><path d="M8 12h.01M12 12h.01M16 12h.01" stroke-width="2.4"/>',
-  gift: '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M5 12v8h14v-8M12 8v12M12 8C7 8 6 7 6 5a2.4 2.4 0 0 1 4-1c1 1 2 3 2 4zm0 0c5 0 6-1 6-3a2.4 2.4 0 0 0-4-1c-1 1-2 3-2 4z"/>'
 }
 
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
-export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? paths.tag}</svg>`
-export const categoryArt = (glyph, size = 18) => `<span class="category-icon">${icon(glyph, size)}</span>`
+export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? categoryIconPaths(name)}</svg>`
+const svg = (inner, size) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`
+export const glyph = (name, size = 22) => svg(categoryIconPaths(name), size)
+export const categoryArt = (name, size = 22) => `<span class="category-icon">${glyph(name, size)}</span>`
 export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>小日账</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
 export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, label, selected)).join('')

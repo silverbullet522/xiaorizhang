@@ -1,4 +1,5 @@
-import { currencies, dateTime, defaults, directions, withQuotes } from './core.mjs'
+import { currencies, dateTime, defaults, directions, presetRenames, withQuotes } from './core.mjs'
+import { iconNames } from './icons.mjs'
 
 const database = new Promise((resolve, reject) => {
   const open = indexedDB.open('hiba-ledger', 1)
@@ -19,17 +20,33 @@ const database = new Promise((resolve, reject) => {
   open.onerror = () => reject(open.error)
 })
 
-// Ledgers created before the preset list grew get the new presets. Existing categories are never changed,
-// and a preset is skipped when the same name is already used at that level.
+const presetVersion = 2
+
+// Brings older ledgers up to the current presets. Version 2 (one time) renames presets that still carry their old
+// name and gives preset categories their own icons; before it, icons could not be chosen, so these were never edited.
+// Every open then adds missing presets, skipping any name already used at that level.
 function addMissingDefaults(db) {
   return new Promise(resolve => {
-    const tx = db.transaction('categories', 'readwrite')
+    const tx = db.transaction(['categories', 'settings'], 'readwrite')
     const store = tx.objectStore('categories')
+    const settings = tx.objectStore('settings')
     const request = store.getAll()
-    request.onsuccess = () => {
-      const existing = request.result
+    const version = settings.get('presets')
+    // Requests in one transaction finish in order, so the categories are ready when the version arrives.
+    version.onsuccess = () => topUp(request.result, version.result ?? 1)
+    function topUp(existing, from) {
       const ids = new Set(existing.map(item => item.id))
       const key = item => JSON.stringify([item.direction, item.parentId, item.name])
+      if (from < presetVersion) {
+        const preset = new Map(defaults.map(item => [item.id, item]))
+        for (const item of existing) {
+          const rename = presetRenames.find(change => change.id === item.id && change.from === item.name)
+          if (rename && !existing.some(other => other !== item && key(other) === key({ ...item, name: rename.to }))) item.name = rename.to
+          if (preset.has(item.id)) item.icon = preset.get(item.id).icon
+          if (rename || preset.has(item.id)) store.put(item)
+        }
+        settings.put(presetVersion, 'presets')
+      }
       const taken = new Set(existing.map(key))
       const parents = new Map(existing.filter(item => item.parentId === null).map(item => [item.id, item]))
       const parentFor = new Map()
@@ -43,7 +60,7 @@ function addMissingDefaults(db) {
           continue
         }
         const parent = parentFor.get(item.parentId)
-        const child = { ...item, parentId: parent?.id, icon: parent?.icon }
+        const child = { ...item, parentId: parent?.id }
         if (!parent || ids.has(item.id) || taken.has(key(child))) continue
         store.add(child)
         taken.add(key(child))
@@ -162,7 +179,7 @@ const shortText = (value, max) => typeof value === 'string' && value.length > 0 
 const minorOrNull = value => value === null || (Number.isSafeInteger(value) && value >= 0)
 const quoteCodes = ['CNY', 'USD']
 const safeId = value => shortText(value, 120) && /^[a-zA-Z0-9_-]+$/.test(value)
-const safeIcons = new Set([...defaults.map(item => item.icon), 'tag'])
+const safeIcons = iconNames
 
 export function validateBackup(input) {
   const fail = () => { throw new Error('无法恢复。请选择由小日账导出的有效备份文件。') }

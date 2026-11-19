@@ -8,9 +8,10 @@ import {
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
+import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
-  brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
+  brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, glyph, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
 } from './ui.mjs'
 
@@ -235,8 +236,8 @@ function refreshLedgerResults() {
 function categoryPage() {
   const direction = state.categoryDirection
   const groups = topCategories(direction).map(item => {
-    const tags = children(item.id).map(child => `<span class="chip">${escape(child.name)}</span>`).join('')
-    return `<section class="panel"><div class="group-head"><span class="category-icon">${icon(item.icon)}</span>
+    const tags = children(item.id).map(child => `<span class="chip">${glyph(child.icon, 15)}${escape(child.name)}</span>`).join('')
+    return `<section class="panel"><div class="group-head">${categoryArt(item.icon)}
       <h2>${escape(item.name)}</h2>${icoButton('category-new', 'plus', '新增二级分类', `data-value="${item.id}"`)}</div>
       <div class="chips">${tags || '<span class="fine">还没有二级分类</span>'}</div></section>`
   })
@@ -295,7 +296,7 @@ function renderBulkCategory() {
   const selected = state.categories.find(item => item.id === categoryId)
   const rootId = selected?.parentId ?? selected?.id ?? (categoryId === null ? '' : undefined)
   const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="bulk-pick" data-value="${item.id}">
-    ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
+    ${categoryArt(item.icon)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
   const root = selected && state.categories.find(item => item.id === rootId)
   const unchanged = counts[direction === 'expense' ? 'income' : 'expense'] + bulk.others
@@ -307,7 +308,7 @@ function renderBulkCategory() {
       <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
       <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button></div>
     ${root ? `<div class="category-children">${children(root.id).map(item => pill(item, item.id === categoryId)).join('')}
-      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(root.id)}" aria-label="在${escape(root.name)}下新增二级分类">${icon('plus', 14)}<span>添加</span></button></div>` : ''}
+      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(root.id)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button></div>` : ''}
     ${categoryAdder}
     <div class="form-footer">${cancelButton}<button type="button" class="button primary" data-action="bulk-apply" ${categoryId === undefined ? 'disabled' : ''}>${label}</button></div>
   </div>`)
@@ -390,9 +391,10 @@ function changeMonth(delta) {
 
 function createCategory(parentId) {
   const parent = state.categories.find(item => item.id === parentId)
-  openDialog(parent ? '新增二级分类' : '新增一级分类', `<form id="category-form" class="form-grid" data-parent="${parent?.id ?? ''}">
+  openDialog(parent ? '新增二级分类' : '新增一级分类', `<form id="category-form" class="form-grid" data-parent="${parent?.id ?? ''}" data-icon-holder data-icon="${startingIcon(parent)}">
     ${parent ? `<p class="fine">${directions[parent.direction]} · ${escape(parent.name)}</p>` : selectField('收支类型', 'direction', ['expense', 'income'].map(id => option(id, directions[id], state.categoryDirection)).join(''))}
     ${field('分类名称', '<input name="name" maxlength="24" required placeholder="输入分类名称">')}
+    <div class="field"><span>图标</span>${iconPicker(startingIcon(parent))}</div>
     ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton('保存分类')}</div></form>`)
 }
 
@@ -408,7 +410,7 @@ function selectCategories(form, selectedId = '') {
   section.hidden = direction === 'transfer'
   if (section.hidden) return
   const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="entry-category" data-value="${item.id}">
-    ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
+    ${categoryArt(item.icon)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
   strip.innerHTML = roots.map(item => pill(item, item.id === rootId)).join('') +
     `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
@@ -417,17 +419,23 @@ function selectCategories(form, selectedId = '') {
   const root = state.categories.find(item => item.id === rootId)
   childGrid.hidden = !root
   childGrid.innerHTML = root ? children(rootId).map(item => pill(item, item.id === selectedId)).join('') +
-    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类">${icon('plus', 14)}<span>添加</span></button>` : ''
+    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>` : ''
   section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
 }
 
 // The entry sheet and the bulk category dialog share one inline "add category" field.
-const categoryAdder = `<div class="category-adder" hidden>
+const categoryAdder = `<div class="category-adder" data-icon-holder hidden>
   <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="新分类名称">
   <button type="button" class="button" data-action="category-add-cancel">取消</button>
   <button type="button" class="button primary" data-action="category-add-save">添加</button>
   <span class="category-adder-error" role="alert"></span>
+  <div class="icon-picker-slot"></div>
 </div>`
+
+// A child starts from its parent's icon, a new top-level category from the plain tag.
+const startingIcon = parent => parent ? iconAliases[parent.icon] ?? parent.icon : 'tag'
+const iconPicker = selected => `<div class="icon-picker" role="radiogroup" aria-label="选择图标">${iconChoices.map(name =>
+  `<button type="button" class="icon-choice" role="radio" aria-checked="${name === selected}" aria-label="${name}" data-action="pick-icon" data-value="${name}">${glyph(name, 22)}</button>`).join('')}</div>`
 const pickerDirection = picker => picker.dataset.direction ?? picker.closest('form').elements.direction.value
 
 function openCategoryAdder(picker, parentId) {
@@ -438,6 +446,8 @@ function openCategoryAdder(picker, parentId) {
   adder.querySelector('.category-adder-error').textContent = ''
   input.value = ''
   input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[pickerDirection(picker)]}一级分类`
+  adder.dataset.icon = startingIcon(parent)
+  adder.querySelector('.icon-picker-slot').innerHTML = iconPicker(adder.dataset.icon)
   adder.hidden = false
   input.focus()
 }
@@ -450,7 +460,7 @@ async function saveInlineCategory(picker) {
   const form = picker.closest('#entry-form')
   adder.dataset.saving = 'true'
   try {
-    const result = await addCategory(parent?.id ?? null, parent?.direction ?? pickerDirection(picker), adder.querySelector('input').value)
+    const result = await addCategory(parent?.id ?? null, parent?.direction ?? pickerDirection(picker), adder.querySelector('input').value, adder.dataset.icon)
     if (result.error) { adder.querySelector('.category-adder-error').textContent = result.error; return }
     await reload()
     if (form && byId('entry-form') === form) selectCategories(form, result.id)
@@ -875,20 +885,21 @@ async function submitEntry(form, control) {
   await refreshRates()
 }
 
-async function addCategory(parentId, direction, value) {
+async function addCategory(parentId, direction, value, chosenIcon) {
   const name = value.normalize('NFKC').trim()
   if (!name || name.length > 24) return { error: '请输入 1 到 24 个字符的名称。' }
   const taken = { error: '同级分类中已有这个名称。' }
   if (state.categories.some(item => item.parentId === parentId && item.direction === direction && item.name === name)) return taken
   const parent = state.categories.find(item => item.id === parentId)
-  const category = { id: crypto.randomUUID(), parentId, direction, name, icon: parent?.icon ?? 'tag' }
+  const icon = iconNames.has(chosenIcon) ? chosenIcon : startingIcon(parent)
+  const category = { id: crypto.randomUUID(), parentId, direction, name, icon }
   return await saveCategory(category) ? { id: category.id } : taken
 }
 
 async function submitCategory(form) {
   const parent = state.categories.find(item => item.id === form.dataset.parent)
   const direction = parent?.direction ?? form.elements.direction.value
-  const result = await addCategory(parent?.id ?? null, direction, form.elements.name.value)
+  const result = await addCategory(parent?.id ?? null, direction, form.elements.name.value, form.dataset.icon)
   if (result.error) { formError(result.error); return }
   state.categoryDirection = direction
   dialog.close()
@@ -977,6 +988,11 @@ const actions = {
   },
   'category-new': ({ value }) => createCategory(value),
   'category-add': ({ value }, control) => openCategoryAdder(control.closest('.category-picker'), value),
+  'pick-icon': ({ value }, control) => {
+    const holder = control.closest('[data-icon-holder]')
+    holder.dataset.icon = value
+    for (const choice of control.parentElement.children) choice.setAttribute('aria-checked', String(choice === control))
+  },
   'category-add-cancel': (_, control) => { control.closest('.category-adder').hidden = true },
   'category-add-save': (_, control) => saveInlineCategory(control.closest('.category-picker')),
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },

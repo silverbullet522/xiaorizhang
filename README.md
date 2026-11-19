@@ -21,4 +21,4 @@
 
 ## 开发
 
-应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。
+应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析，分类图标来自 Lucide（ISC，见 `dist/vendor/LICENSE.lucide.txt`）。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。

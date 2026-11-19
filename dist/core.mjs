@@ -11,31 +11,41 @@ export function tokyoNow(now = new Date()) {
 }
 
 // Child ids come from their position, so new children are only ever appended to keep saved entries pointing at the same category.
+// Each child is "name:icon"; icons are Lucide names from icons.mjs.
 const seeds = [
-  ['food', '餐饮', 'expense', 'coffee', ['正餐', '咖啡饮品', '食材零食', '外卖', '蔬菜水果', '烟酒']],
-  ['travel', '交通', 'expense', 'train', ['公共交通', '打车', '机票', '火车']],
-  ['shopping', '购物', 'expense', 'bag', ['服饰', '日用品', '数码', '鞋包']],
-  ['home', '住房', 'expense', 'home', ['房租', '水电网费', '物业管理', '房贷']],
-  ['fun', '休闲', 'expense', 'sparkle', ['娱乐', '旅行', '游戏', '电影演出', '兴趣收藏', '彩票']],
-  ['health', '医疗健康', 'expense', 'heart', ['医疗', '运动', '药品', '体检']],
-  ['living', '居家', 'expense', 'sofa', ['家具', '家电', '清洁', '维修']],
-  ['comm', '通讯', 'expense', 'phone', ['话费', '订阅会员', '快递']],
-  ['beauty', '美容', 'expense', 'scissors', ['美发', '美甲', '护肤彩妆', '按摩']],
-  ['learn', '学习办公', 'expense', 'book', ['书籍', '课程', '考试', '办公用品']],
-  ['social', '人情社交', 'expense', 'chat', ['聚会', '礼物', '礼金红包', '捐赠']],
-  ['family', '家庭', 'expense', 'family', ['孩子', '长辈', '亲友']],
-  ['pet', '宠物', 'expense', 'paw', ['宠物食品', '宠物用品', '宠物医疗']],
-  ['car', '汽车', 'expense', 'car', ['加油充电', '停车', '保养维修', '车险']],
-  ['misc', '其他支出', 'expense', 'more', ['保险', '税费', '手续费', '杂项']],
-  ['salary', '工资', 'income', 'wallet', ['基本工资', '奖金', '加班', '补贴']],
-  ['extra', '其他收入', 'income', 'gift', ['副业', '礼金', '红包', '退款', '报销', '二手转卖']],
-  ['invest', '理财', 'income', 'chart', ['利息', '分红', '投资收益']]
+  ['food', '餐饮', 'expense', 'utensils', '正餐:soup 咖啡饮品:coffee 食材零食:cookie 外卖:bike 蔬菜水果:carrot 烟酒:wine'],
+  ['travel', '交通', 'expense', 'bus', '公共交通:tram-front 打车:car-taxi-front 机票:plane 火车:train-front'],
+  ['shopping', '购物', 'expense', 'shopping-bag', '服饰:shirt 日用品:spray-can 数码:laptop 鞋包:backpack'],
+  ['home', '住房', 'expense', 'house', '房租:key-round 水电网费:zap 物业管理:building 房贷:landmark'],
+  ['fun', '娱乐', 'expense', 'ferris-wheel', '休闲:tree-palm 旅行:luggage 游戏:gamepad-2 电影演出:clapperboard 兴趣收藏:puzzle 彩票:ticket'],
+  ['health', '医疗健康', 'expense', 'heart-pulse', '医疗:stethoscope 运动:dumbbell 药品:pill 体检:activity'],
+  ['living', '居家', 'expense', 'sofa', '家具:armchair 家电:refrigerator 清洁:sparkles 维修:wrench'],
+  ['comm', '通讯', 'expense', 'smartphone', '话费:phone 订阅会员:crown 快递:package'],
+  ['beauty', '美容', 'expense', 'scissors', '美发:scissors 美甲:brush 护肤彩妆:flower-2 按摩:hand'],
+  ['learn', '学习办公', 'expense', 'graduation-cap', '书籍:book-open 课程:presentation 考试:pencil 办公用品:briefcase'],
+  ['social', '人情社交', 'expense', 'messages-square', '聚会:beer 礼物:gift 礼金红包:mail 捐赠:heart-handshake'],
+  ['family', '家庭', 'expense', 'users', '孩子:baby 长辈:glasses 亲友:heart'],
+  ['pet', '宠物', 'expense', 'paw-print', '宠物食品:bone 宠物用品:dog 宠物医疗:syringe'],
+  ['car', '汽车', 'expense', 'car', '加油充电:fuel 停车:circle-parking 保养维修:cog 车险:shield-check'],
+  ['misc', '其他支出', 'expense', 'shapes', '保险:shield 税费:receipt 手续费:percent 杂项:circle-ellipsis'],
+  ['salary', '工资', 'income', 'wallet', '基本工资:banknote 奖金:award 加班:clock 补贴:hand-coins'],
+  ['extra', '其他收入', 'income', 'coins', '副业:store 礼金:gift 红包:mail 退款:undo-2 报销:receipt-text 二手转卖:recycle'],
+  ['invest', '理财', 'income', 'chart-line', '利息:piggy-bank 分红:chart-pie 投资收益:trending-up']
 ]
 
 export const defaults = seeds.flatMap(([id, name, direction, icon, children]) => [
   { id, name, direction, icon, parentId: null },
-  ...children.map((child, index) => ({ id: `${id}-${index}`, name: child, direction, icon, parentId: id }))
+  ...children.split(' ').map((child, index) => {
+    const [childName, childIcon] = child.split(':')
+    return { id: `${id}-${index}`, name: childName, direction, icon: childIcon, parentId: id }
+  })
 ])
+
+// Preset names changed in later versions; existing ledgers are renamed only while they still use the old name.
+export const presetRenames = [
+  { id: 'fun', from: '休闲', to: '娱乐' },
+  { id: 'fun-0', from: '娱乐', to: '休闲' }
+]
 
 export function dateTime(value, excel1904 = null) {
   if (typeof value === 'number' && excel1904 !== null && Number.isFinite(value) && value >= 0 && value <= 2957000) {
