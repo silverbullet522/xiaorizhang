@@ -8,13 +8,14 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
+import { allowsMotion, animateCategory, playMotion, readMeters, transitionMeters } from './motion.mjs'
 import { billCycles, billKey, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, nextFutureBillDate } from './features.mjs'
 import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
   brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
-  option, periodDisplay, summaryCards, tabs, transaction, trend
+  meterFill, option, periodDisplay, summaryCards, tabs, transaction, trend
 } from './ui.mjs'
 
 const byId = id => document.getElementById(id)
@@ -29,7 +30,6 @@ const state = {
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'], settings: ['设置', 'settings'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
 const phone = standalone || matchMedia('(pointer: coarse)').matches
-const allowsMotion = matchMedia('(prefers-reduced-motion: no-preference)')
 let importState
 let hiddenAt = 0
 let pasteTimer
@@ -39,10 +39,16 @@ let noticeTimer
 let ratesTask
 let offlineReady = Boolean(navigator.serviceWorker?.controller)
 
-function toast(message) {
+function toast(message, success = false) {
   clearTimeout(noticeTimer)
-  byId('notice').textContent = message
-  noticeTimer = setTimeout(() => { byId('notice').textContent = '' }, 3200)
+  const notice = byId('notice')
+  notice.textContent = message
+  notice.classList.toggle('has-feedback', success)
+  if (success) {
+    notice.insertAdjacentHTML('afterbegin', icon('check', 18))
+    playMotion(notice.firstElementChild, [{ opacity: .2, transform: 'scale(.68)' }, { opacity: 1, transform: 'scale(1)' }], 190)
+  }
+  noticeTimer = setTimeout(() => { notice.textContent = '' }, 3200)
 }
 
 function formError(message) {
@@ -78,9 +84,18 @@ function chrome() {
     <div class="top-actions">${icoButton('screen-paste', 'scan', t('粘贴屏幕账单'))}
     ${icoButton('pick-import', 'upload', t('导入账单'))}
     <span class="desktop-add">${button('add', t('记一笔'), '', 'plus', 'primary')}</span></div>`
-  byId('mobile-nav').innerHTML = `${navLink('home')}${navLink('overview')}
-    <button class="mobile-add" type="button" data-action="add" aria-label="${t('记一笔')}">${icon('plus', 26)}</button>
-    ${navLink('categories')}${navLink('settings')}`
+  const mobileNav = byId('mobile-nav')
+  // Keep the buttons mounted so their active color and icon can transition.
+  if (mobileNav.dataset.language !== language) {
+    mobileNav.innerHTML = `${navLink('home')}${navLink('overview')}
+      <button class="mobile-add" type="button" data-action="add" aria-label="${t('记一笔')}">${icon('plus', 26)}</button>
+      ${navLink('categories')}${navLink('settings')}`
+    mobileNav.dataset.language = language
+  }
+  for (const link of mobileNav.querySelectorAll('.nav-link')) {
+    if (link.dataset.value === state.view) link.setAttribute('aria-current', 'page')
+    else link.removeAttribute('aria-current')
+  }
   const offline = byId('settings-offline')
   if (offline) offline.textContent = offlineDescription()
 }
@@ -134,6 +149,7 @@ function home() {
   const entries = state.entries.filter(entry => within(entry, active))
   const totals = summarize(entries, state.currency)
   const daily = summarize(state.entries.filter(entry => entry.at.startsWith(today)), state.currency)
+  const reminder = billsPanel()
   return `<div class="page-heading book-heading"><h1>${t('账本')}</h1>${periodControls()}</div>
     <div class="book-layout">
       <div class="book-digest">
@@ -148,7 +164,7 @@ function home() {
           </dl>
         </section>
         ${pendingBanner(totals.pending)}
-        ${billsPanel()}${budgetPanel()}
+        ${reminder ? `<div class="due-slot">${reminder}</div>` : ''}${budgetPanel()}
       </div>
       <section class="book-activity" aria-labelledby="ledger-title">
         <div class="activity-head"><h2 id="ledger-title" tabindex="-1">${t('流水')}</h2>
@@ -247,8 +263,8 @@ function ledgerResults() {
 function ledgerTools() {
   const day = state.ledgerDay
   return `<div class="ledger-tools">
-      <label class="search-field" id="ledger-search-field"${state.ledgerSearchOpen ? '' : ' hidden'}><span class="sr-only">${t('搜索备注或分类')}</span>
-        <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="${t('搜索备注或分类')}" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
+      <div id="ledger-search-field"${state.ledgerSearchOpen ? '' : ' hidden'}><label class="search-field"><span class="sr-only">${t('搜索备注或分类')}</span>
+        <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="${t('搜索备注或分类')}" enterkeyhint="search" autocomplete="off" spellcheck="false"></label></div>
       <div class="ledger-filter">${tabs('ledger-direction', { all: t('全部'), expense: directionLabel('expense'), income: directionLabel('income') }, state.ledgerDirection)}
         <button type="button" id="ledger-category-toggle" class="ledger-category-toggle" data-action="ledger-categories-toggle"
           aria-controls="ledger-category-picker" aria-expanded="${state.ledgerCategoriesOpen}">${ledgerCategoryButtonContent()}</button></div>
@@ -276,7 +292,20 @@ function setLedgerSearchOpen(open) {
   trigger.setAttribute('aria-expanded', String(open))
   trigger.setAttribute('aria-label', label)
   trigger.title = label
-  byId('ledger-search-field').hidden = !open
+  const field = byId('ledger-search-field')
+  const from = field.hidden ? 0 : field.getBoundingClientRect().height
+  field.hidden = false
+  field.inert = !open
+  const to = open ? field.firstElementChild.getBoundingClientRect().height : 0
+  const animation = playMotion(field, [
+    { height: `${from}px`, overflow: 'hidden', opacity: from ? 1 : .1 },
+    { height: `${to}px`, overflow: 'hidden', opacity: open ? 1 : 0 }
+  ], 170)
+  if (!open) {
+    const hide = () => { if (!state.ledgerSearchOpen) field.hidden = true }
+    if (animation) animation.finished.then(hide, hide)
+    else hide()
+  }
   if (open) {
     if (state.ledgerCategoriesOpen) {
       state.ledgerCategoriesOpen = false
@@ -339,10 +368,17 @@ function categoryPage() {
 }
 
 function render() {
+  const previousMeters = main.dataset.view === state.view ? readMeters(main) : null
+  const previousReminder = allowsMotion.matches && state.view === 'home' && main.dataset.view === 'home'
+    ? main.querySelector('.due-slot:not([data-leaving])') : null
+  const reminderHeight = previousReminder?.getBoundingClientRect().height
   chrome()
   main.innerHTML = ({ home, overview, categories: categoryPage, settings: settingsPage })[state.view]()
+  main.dataset.view = state.view
   placeLedgerCategoryChildren()
   syncSelection()
+  transitionMeters(main, previousMeters)
+  transitionDueReminder(previousReminder, reminderHeight)
 }
 
 // Only rows still on screen can stay selected, so a bulk action never reaches entries the person cannot see.
@@ -443,6 +479,7 @@ function resetLedgerFilters() {
 }
 
 function go(view, focusLedger = false) {
+  const changed = state.view !== view
   state.view = view
   stopSelecting()
   render()
@@ -450,15 +487,19 @@ function go(view, focusLedger = false) {
   target.focus({ preventScroll: true })
   if (focusLedger) target.scrollIntoView({ block: 'start' })
   else window.scrollTo(0, 0)
+  if (changed) playMotion(main, [{ opacity: .55, transform: 'translateY(4px)' }, { opacity: 1, transform: 'translateY(0)' }], 170)
 }
 
 function openDialog(title, content, layout = '') {
+  const replacingEntry = dialog.open && layout === 'entry' && dialog.classList.contains('entry-sheet')
   dialog.classList.toggle('wide', layout === 'wide')
   dialog.classList.toggle('entry-sheet', layout === 'entry')
   dialog.innerHTML = `<div class="dialog-top"><h2 id="dialog-title">${title}</h2>
     ${icoButton('close', 'close', t('关闭'))}</div><div class="dialog-content">${content}</div>`
   if (!dialog.open) dialog.showModal()
   dialog.scrollTop = 0
+  if (replacingEntry) playMotion(dialog.querySelector('.dialog-content'),
+    [{ opacity: .55, transform: 'translateY(9px)' }, { opacity: 1, transform: 'translateY(0)' }], 195)
 }
 
 const errorPlaceholder = '<p class="form-error" role="alert"></p>'
@@ -913,8 +954,9 @@ function budgetRows(budgets, categorized = false) {
         <span>${categorized ? '' : `<b>${budget.currency}</b> `}${t('已用 {0}', amount(budget.spent))}<span class="budget-limit"> / ${amount(budget.minor)}</span></span>
         <strong>${status}</strong>
       </div>
-      <progress aria-label="${escape((categorized ? label : t('总预算')) + ' · ' + budget.currency + ' ' + amount(budget.minor))}"
-        max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
+      <span class="budget-track" role="progressbar" aria-label="${escape((categorized ? label : t('总预算')) + ' · ' + budget.currency)}"
+        aria-valuemin="0" aria-valuemax="${budget.minor}" aria-valuenow="${Math.min(budget.spent, budget.minor)}" aria-valuetext="${escape(status)}">
+        ${meterFill(`budget:${budget.id}`, Math.min(budget.spent / budget.minor, 1))}</span>
       ${budget.pending ? `<small>${t('{0} 笔待换算', budget.pending)}</small>` : ''}
     </li>`
   }).join('')}</ul>`
@@ -939,6 +981,30 @@ function billsPanel() {
   return `<button class="due-reminder" type="button" data-action="${single ? 'review-bill' : 'review-due-bills'}" ${single ? billControl(single) : ''}>
     ${icon('calendar', 17)}<span>${t('固定账单')}</span><small>${summary}${amount ? ' · ' + amount : ''}</small>${icon('right', 15)}
   </button>`
+}
+
+function transitionDueReminder(previous, height) {
+  const digest = main.querySelector('.book-digest')
+  if (!previous || !digest || !allowsMotion.matches) return
+  const current = digest.querySelector('.due-slot')
+  if (current) {
+    const summary = current.querySelector('.due-reminder small')
+    if (summary.textContent !== previous.querySelector('.due-reminder small').textContent) {
+      playMotion(summary, [{ opacity: .4, transform: 'translateY(3px)' }, { opacity: 1, transform: 'translateY(0)' }], 160)
+    }
+    return
+  }
+  previous.dataset.leaving = ''
+  previous.inert = true
+  previous.setAttribute('aria-hidden', 'true')
+  previous.querySelector('.due-reminder').disabled = true
+  digest.insertBefore(previous, digest.querySelector('.home-budget'))
+  const animation = playMotion(previous, [
+    { height: height + 'px', overflow: 'hidden', opacity: 1 },
+    { height: '0px', overflow: 'hidden', opacity: 0 }
+  ], 190)
+  if (animation) animation.finished.then(() => previous.remove(), () => previous.remove())
+  else previous.remove()
 }
 
 function openDueBills() {
@@ -1416,15 +1482,27 @@ async function submitEntry(form, control) {
       return
     }
   }
-  if (!repeat) dialog.close()
+  if (!repeat && dialog.open && byId('entry-form') === form) dialog.close()
   if (!previous && !within(entry, period())) {
     state.month = entry.at.slice(0, 7)
     state.range = null
     clearDrill()
   }
   await reload()
-  if (repeat && dialog.open && byId('entry-form') === form) openEntry()
-  toast(previous ? t('流水已更新') : t('流水已保存'))
+  if (!previous) {
+    const row = main.querySelector(`.transaction[data-value="${CSS.escape(id)}"]`)
+    playMotion(row, [{ opacity: .25, transform: 'translateY(5px)' }, { opacity: 1, transform: 'translateY(0)' }], 200)
+  }
+  if (repeat && dialog.open && byId('entry-form') === form) {
+    openEntry()
+    const key = byId('entry-form').querySelector('.key-save')
+    key.classList.add('saved-entry-key')
+    key.insertAdjacentHTML('afterbegin', icon('check', 16))
+    const mark = key.firstElementChild
+    playMotion(mark, [{ opacity: .2, transform: 'scale(.68)' }, { opacity: 1, transform: 'scale(1)' }], 180)
+    setTimeout(() => { mark.remove(); key.classList.remove('saved-entry-key') }, 700)
+  }
+  toast(previous ? t('流水已更新') : t('流水已保存'), true)
   await refreshRates()
 }
 
@@ -1508,6 +1586,7 @@ const actions = {
     const form = byId('entry-form')
     const group = control.parentElement
     const opensChildren = control.getAttribute('aria-expanded') === 'false'
+    const changed = control.getAttribute('aria-pressed') === 'false'
     selectCategories(form, value)
     const selected = Array.from(group.children).find(item => item.dataset.value === value)
     selected?.focus({ preventScroll: true })
@@ -1515,10 +1594,8 @@ const actions = {
       selected.scrollIntoView({ block: 'nearest' })
       const panel = byId('entry-subcategories')
       panel.firstElementChild.scrollIntoView({ block: 'nearest' })
-      if (opensChildren && allowsMotion.matches) {
-        panel.animate([{ opacity: .55, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'ease-out' })
-      }
     }
+    animateCategory(changed ? selected : null, opensChildren ? byId('entry-subcategories') : null)
   },
   'screen-paste': pasteFromScreen,
   'dismiss-paste': hidePaste,
@@ -1581,14 +1658,21 @@ const actions = {
   'ledger-categories-toggle': () => setLedgerCategoriesOpen(!state.ledgerCategoriesOpen),
   'ledger-categories-close': () => setLedgerCategoriesOpen(false),
   'ledger-category-pick': ({ value }, control) => {
+    const opensChildren = control.getAttribute('aria-expanded') === 'false'
+    const changed = control.getAttribute('aria-pressed') === 'false'
     state.ledgerCategory = value === '*' ? null : value
     state.ledgerLimit = 60
     if (control.hasAttribute('aria-expanded')) {
       refreshLedgerCategories()
       const active = byId('ledger-category-options').querySelector('[aria-expanded="true"]')
+      const children = byId('ledger-filter-children')
       active?.focus({ preventScroll: true })
-      byId('ledger-filter-children')?.firstElementChild?.scrollIntoView({ block: 'nearest' })
-    } else setLedgerCategoriesOpen(false)
+      children?.firstElementChild?.scrollIntoView({ block: 'nearest' })
+      animateCategory(changed ? active : null, opensChildren ? children : null)
+    } else {
+      setLedgerCategoriesOpen(false)
+      if (changed) animateCategory(byId('ledger-category-toggle'))
+    }
     refreshLedgerResults()
   },
   'ledger-direction': ({ value }, control) => {
@@ -1612,7 +1696,16 @@ const actions = {
   'search-scope': () => { state.searchAll = !state.searchAll; state.ledgerLimit = 60; refreshLedgerResults() },
   'bulk-category': openBulkCategory,
   'bulk-direction': ({ value }) => { bulk.direction = value; bulk.categoryId = undefined; renderBulkCategory() },
-  'bulk-pick': ({ value }) => { bulk.categoryId = value || null; renderBulkCategory() },
+  'bulk-pick': ({ value }, control) => {
+    const changed = control.getAttribute('aria-pressed') === 'false'
+    const rootSelected = state.categories.find(item => item.id === value)?.parentId === null
+    bulk.categoryId = value || null
+    renderBulkCategory()
+    const picker = dialog.querySelector('.bulk-category')
+    const selected = picker.querySelector(`[data-action="bulk-pick"][data-value="${CSS.escape(value)}"]`)
+    selected?.focus({ preventScroll: true })
+    if (changed) animateCategory(selected, rootSelected ? picker.querySelector('.category-children') : null)
+  },
   'bulk-apply': (_, control) => applyBulkCategory(control),
   'drill-day': ({ start, end }) => {
     resetLedgerFilters()
@@ -1667,14 +1760,18 @@ const actions = {
   'feature-category-pick': ({ value }, control) => {
     const picker = control.closest('.feature-category')
     const hasChildren = control.hasAttribute('aria-expanded')
+    const opensChildren = control.getAttribute('aria-expanded') === 'false'
+    const changed = control.getAttribute('aria-pressed') === 'false'
     picker.querySelector('[name="category"]').value = value
     setFeatureCategoriesOpen(picker, hasChildren)
     if (hasChildren) {
       const active = picker.querySelector('[aria-expanded="true"][data-action="feature-category-pick"]')
+      const children = picker.querySelector('.category-children')
       active?.focus({ preventScroll: true })
       active?.scrollIntoView({ block: 'nearest' })
-      picker.querySelector('.category-children')?.firstElementChild?.scrollIntoView({ block: 'nearest' })
-    }
+      children?.firstElementChild?.scrollIntoView({ block: 'nearest' })
+      animateCategory(changed ? active : null, opensChildren ? children : null)
+    } else if (changed) animateCategory(picker.querySelector('.feature-category-toggle'))
   },
   'bill-from-entry': ({ value }) => billFromEntry(value),
   'review-due-bills': openDueBills,

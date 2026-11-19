@@ -287,7 +287,9 @@ html[lang="en"] .ledger-filter .tab { font-size: 12.5px }
   background: repeating-linear-gradient(to bottom, var(--line) 0, var(--line) 1px, transparent 1px, transparent calc((100% - 1px) / 3));
 }
 .chart-day { flex: 1; height: 100%; min-width: 0; display: flex; justify-content: center; align-items: flex-end; gap: 1px; padding: 0; border: 0; border-radius: 4px 4px 0 0; background: transparent }
-.bar { width: min(34%, 8px); height: var(--h); background: var(--bar-in); border-radius: 2px 2px 0 0 }
+.meter-fill { display: block; width: 100%; height: 100%; transform: scaleX(var(--meter-level)); transform-origin: left center }
+.meter-fill[data-axis="y"] { transform: scaleY(var(--meter-level)); transform-origin: center bottom }
+.bar { width: min(34%, 8px); background: var(--bar-in); border-radius: 2px 2px 0 0 }
 .bar.cost { background: var(--bar-out) }
 .chart-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--faint); font-size: 13px; pointer-events: none }
 .chart-labels { display: flex; justify-content: space-between; margin: 8px 0 0 36px; font-size: 11px; color: var(--faint) }
@@ -302,8 +304,8 @@ html[lang="en"] .ledger-filter .tab { font-size: 12.5px }
 .stat-line.child .stat-name { font-size: 13px; color: var(--muted) }
 .stat-line.child .stat-name strong { font-weight: 500 }
 .stat-track { height: 4px; background: var(--surface-2); border-radius: 99px; overflow: hidden }
-.stat-track i { display: block; width: var(--w); height: 100%; border-radius: 99px; background: var(--ink-2) }
-.stat-line.child .stat-track i { background: var(--faint) }
+.stat-track .meter-fill { border-radius: 99px; background: var(--ink-2) }
+.stat-line.child .stat-track .meter-fill { background: var(--faint) }
 
 /* Categories page */
 .groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px }
@@ -429,8 +431,9 @@ button.feature-row { cursor: pointer }
 .budget-line.over-budget .budget-line-values strong { color: var(--danger) }
 .budget-category { font-size: 13px; overflow-wrap: anywhere }
 .budget-category small { font-size: 11px; color: var(--muted) }
-.budget-line progress { display: block; width: 100%; height: 5px; margin: 5px 0 2px; accent-color: var(--ink-2) }
-.budget-line.over-budget progress { accent-color: var(--brand) }
+.budget-track { display: block; height: 5px; margin: 5px 0 2px; overflow: hidden; border-radius: 99px; background: var(--line-strong) }
+.budget-track .meter-fill { background: var(--ink-2); border-radius: inherit }
+.budget-line.over-budget .budget-track .meter-fill { background: var(--brand) }
 .import-match[open] { grid-column: 1 / -1; margin-top: 5px }
 .import-match summary { display: list-item; width: fit-content; cursor: pointer }
 .import-match small { overflow-wrap: anywhere }
@@ -533,6 +536,7 @@ html[lang="en"] .entry-cat > span:last-child { white-space: normal; overflow-wra
 .key-clear, .key-repeat { font-size: 13.5px; font-weight: 550; color: var(--ink-2) }
 .key-repeat { color: var(--link) }
 .key-save { grid-column: 4; grid-row: 3 / span 2; background: var(--brand); color: var(--brand-ink); font-size: 16px; font-weight: 650 }
+.key-save.saved-entry-key { display: flex; align-items: center; justify-content: center; gap: 5px }
 .key-save:active { background: var(--brand-hover) }
 
 /* Toast */
@@ -542,6 +546,7 @@ html[lang="en"] .entry-cat > span:last-child { white-space: normal; overflow-wra
   background: var(--ink); color: var(--bg); font-size: 14px; box-shadow: 0 6px 24px rgb(0 0 0 / .16);
 }
 #notice:empty { display: none }
+#notice.has-feedback:not(:empty) { display: flex; align-items: center; gap: 8px }
 #quick-paste {
   position: fixed; z-index: 4; left: 50%; bottom: max(28px, env(safe-area-inset-bottom)); transform: translateX(-50%);
   display: flex; align-items: center; gap: 2px; padding: 4px; border-radius: 99px;
@@ -698,15 +703,22 @@ body.selecting #main { padding-bottom: 110px }
     transition: background-color .15s ease, color .15s ease, transform .15s ease;
   }
   :is(.button, .key, .mobile-add):active:not(:disabled), :is(.entry-cat, .icon-choice):active .category-icon { transform: scale(.95) }
+  #mobile-nav .nav-link > svg { transition: transform .18s ease }
+  #mobile-nav .nav-link[aria-current="page"] > svg { transform: translateY(-2px) }
+  #mobile-nav .mobile-add:active:not(:disabled) { transform: scale(.92) }
   .budget-disclosure svg { transition: transform .16s ease }
   .budget-details[open] > .category-budget-body, .ledger-category-picker:not([hidden]) { animation: reveal-in .16s ease-out }
   dialog[open] { animation: dialog-in .18s cubic-bezier(.2, .8, .2, 1) }
+  dialog.entry-sheet[open] { animation: entry-editor-in .2s cubic-bezier(.18, .78, .24, 1) }
   dialog[open]::backdrop { animation: fade-in .18s ease }
   #quick-paste:not([hidden]) { animation: rise-in .28s cubic-bezier(.2, .8, .2, 1) }
   @media (max-width: 735px) {
     dialog[open] { animation: sheet-in .19s cubic-bezier(.2, .8, .2, 1) }
+    dialog.entry-sheet[open] { animation-name: entry-sheet-in }
   }
 }
+@keyframes entry-editor-in { from { opacity: .55; transform: translateY(10px) scale(.98) } }
+@keyframes entry-sheet-in { from { opacity: .65; transform: translateY(30px) } }
 @keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.985) } }
 @keyframes sheet-in { from { opacity: .5; transform: translateY(18px) } }
 @keyframes reveal-in { from { opacity: .55; transform: translateY(-3px) } }

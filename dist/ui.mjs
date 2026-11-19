@@ -34,6 +34,8 @@ export const categoryArt = (name, size = 22, label) => `<span class="category-ic
 export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>${t('小日账')}</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
 export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, t(label), selected)).join('')
+export const meterFill = (key, level, axis = 'x', className = '') => `<span class="meter-fill ${className}" data-meter="${escape(key)}"
+  data-axis="${axis}" data-level="${level}" style="--meter-level:${level}" aria-hidden="true"></span>`
 export const icoButton = (action, glyph, label, extra = '') => `<button type="button" class="icon-button" data-action="${action}" aria-label="${label}" title="${label}" ${extra}>${icon(glyph)}</button>`
 export const button = (action, label, extra = '', glyph = '', className = '') => `<button type="button" class="button ${className}" data-action="${action}" ${extra}>${glyph ? icon(glyph, 17) : ''}${label}</button>`
 
@@ -94,10 +96,11 @@ export function trend(summary, range, currency, offset) {
       </div>` : ''}</div>
     <div class="legend"><span><i></i>${t('收入')}</span><span><i class="cost"></i>${t('支出')}</span></div>
     <div class="chart-shell"><div class="chart-ticks" aria-hidden="true">${[3, 2, 1, 0].map(n => `<span>${tick(step * n)}</span>`).join('')}</div>
-    <div class="chart">${series.map(bin => {
+    <div class="chart">${series.map((bin, index) => {
       const label = t('{0} 收入 {1}，支出 {2}', bin.day, money(bin.income, currency), money(bin.expense, currency))
       return `<button type="button" class="chart-day" data-action="drill-day" data-start="${bin.day}" data-end="${bin.day}" aria-label="${label}" title="${label}" ${bin.income || bin.expense ? '' : 'disabled'}>
-        <span class="bar" style="--h:${bin.income / top * 100}%"></span><span class="bar cost" style="--h:${bin.expense / top * 100}%"></span></button>`
+        ${meterFill(`trend:${index}:income`, bin.income / top, 'y', 'bar')}
+        ${meterFill(`trend:${index}:expense`, bin.expense / top, 'y', 'bar cost')}</button>`
     }).join('')}${series.some(day => day.income || day.expense) ? '' : `<span class="chart-empty">${t('此期间暂无收支')}</span>`}</div></div>
     <div class="chart-labels"><span>${date(series[0].day)}</span>${days > 2 ? `<span>${date(series[Math.floor((days - 1) / 2)].day)}</span>` : ''}
     ${days > 1 ? `<span>${date(series.at(-1).day)}</span>` : ''}</div>
@@ -119,10 +122,11 @@ export function breakdown(entries, categories, direction, currency) {
   }
   const total = [...buckets.values()].reduce((sum, bucket) => sum + bucket.total, 0)
   const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 })
+  let index = 0
   const row = (id, label, amount, child = false) => `<button type="button" class="stat-line${child ? ' child' : ''}" data-action="drill-category" data-value="${escape(id)}">
     <span class="stat-name"><span>${escape(label)}</span><span class="stat-pair"><strong>${money(amount, currency)}</strong>
       <small>${percent.format(amount / total)}</small></span></span>
-    <span class="stat-track" aria-hidden="true"><i style="--w:${amount / total * 100}%"></i></span>
+    <span class="stat-track" aria-hidden="true">${meterFill(`category:${index++}`, amount / total)}</span>
     </button>`
   const rows = [...buckets].sort((a, b) => b[1].total - a[1].total).map(([id, bucket]) =>
     row(id, categoryName(lookup.get(id)) || t('未分类'), bucket.total) +
