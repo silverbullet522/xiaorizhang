@@ -8,6 +8,7 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
+import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
@@ -50,7 +51,7 @@ function formError(message) {
 }
 
 function period() { return state.range ?? monthBounds(state.month) }
-const byName = (a, b) => a.name.localeCompare(b.name, 'zh-CN')
+const byName = (a, b) => categoryName(a).localeCompare(categoryName(b), language)
 const parentOrder = ['food', 'travel', 'shopping', 'home', 'living', 'comm', 'fun', 'health', 'beauty', 'learn',
   'social', 'family', 'pet', 'car', 'misc', 'salary', 'extra', 'invest']
 const priority = item => parentOrder.includes(item.id) ? parentOrder.indexOf(item.id) : parentOrder.length
@@ -58,26 +59,26 @@ const topCategories = direction => state.categories.filter(item => item.directio
   .sort((a, b) => priority(a) - priority(b) || byName(a, b))
 const children = id => id ? state.categories.filter(item => item.parentId === id).sort(byName) : []
 const categoryTile = (item, active, action, disclosure = '') => `<button type="button" class="entry-cat" aria-pressed="${active}"${disclosure} data-action="${action}" data-value="${escape(item.id)}">
-    ${categoryArt(item.icon, 27, item.name)}<span>${escape(item.name)}</span></button>`
+    ${categoryArt(item.icon, 27, item.name)}<span>${escape(categoryName(item))}</span></button>`
 
-const offlineDescription = () => offlineReady ? '应用已准备就绪，可离线记账。' : '首次联网打开时会准备离线应用。'
+const offlineDescription = () => offlineReady ? t('应用已准备就绪，可离线记账。') : t('首次联网打开时会准备离线应用。')
 
 function navLink(view) {
   const [label, glyph] = viewNames[view]
   const active = state.view === view ? 'aria-current="page"' : ''
-  return `<button class="nav-link" data-action="navigate" data-value="${view}" ${active} type="button">${icon(glyph, 19)}${label}</button>`
+  return `<button class="nav-link" data-action="navigate" data-value="${view}" ${active} type="button">${icon(glyph, 19)}${t(label)}</button>`
 }
 
 function chrome() {
-  const status = navigator.onLine ? (offlineReady ? '本机账本 · 可离线使用' : '本机账本') : '离线模式'
+  const status = navigator.onLine ? (offlineReady ? t('本机账本 · 可离线使用') : t('本机账本')) : t('离线模式')
   byId('sidebar').innerHTML = `${brand('sidebar-brand')}<nav class="side-nav">${Object.keys(viewNames).map(navLink).join('')}</nav>
     <div class="side-foot"><div class="side-status"><span class="dot ${navigator.onLine ? '' : 'off'}"></span>${status}</div></div>`
   byId('topbar').innerHTML = `${brand('mobile-brand')}
-    <div class="top-actions">${icoButton('screen-paste', 'scan', '粘贴屏幕账单')}
-    ${icoButton('pick-import', 'upload', '导入账单')}
-    <span class="desktop-add">${button('add', '记一笔', '', 'plus', 'primary')}</span></div>`
+    <div class="top-actions">${icoButton('screen-paste', 'scan', t('粘贴屏幕账单'))}
+    ${icoButton('pick-import', 'upload', t('导入账单'))}
+    <span class="desktop-add">${button('add', t('记一笔'), '', 'plus', 'primary')}</span></div>`
   byId('mobile-nav').innerHTML = `${navLink('home')}${navLink('overview')}
-    <button class="mobile-add" type="button" data-action="add" aria-label="记一笔">${icon('plus', 26)}</button>
+    <button class="mobile-add" type="button" data-action="add" aria-label="${t('记一笔')}">${icon('plus', 26)}</button>
     ${navLink('categories')}${navLink('settings')}`
   const offline = byId('settings-offline')
   if (offline) offline.textContent = offlineDescription()
@@ -85,10 +86,8 @@ function chrome() {
 
 const periodControls = () => `<div class="filter-actions">${periodDisplay(state.range, state.month)}${tabs('currency', { JPY: 'JPY', CNY: 'CNY' }, state.currency)}</div>`
 const pendingBanner = count => count
-  ? `<div class="banner"><span>当前金额为已换算小计，${count} 笔待换算。</span><button type="button" data-action="retry-rates" class="plain">刷新汇率</button></div>`
+  ? `<div class="banner"><span>${t('当前金额为已换算小计，{0} 笔待换算。', count)}</span><button type="button" data-action="retry-rates" class="plain">${t('刷新汇率')}</button></div>`
   : ''
-
-const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short', timeZone: 'UTC' })
 
 function dayCards(entries) {
   const groups = new Map()
@@ -104,16 +103,15 @@ function dayCards(entries) {
   for (const [day, group] of groups) {
     if (remaining <= 0) break
     const sums = summarize(group, state.currency)
-    const [, month, date] = day.split('-').map(Number)
-    const label = day === today ? '今天' : day === yesterday ? '昨天' : weekday.format(new Date(day + 'T00:00:00Z'))
+    const label = day === today ? t('今天') : day === yesterday ? t('昨天') : formatDate(day, 'weekday')
     const totals = [
-      sums.expense && `支 ${money(sums.expense, state.currency)}`,
-      sums.income && `收 ${money(sums.income, state.currency)}`,
-      sums.pending && '待换算'
+      sums.expense && t('支 {0}', money(sums.expense, state.currency)),
+      sums.income && t('收 {0}', money(sums.income, state.currency)),
+      sums.pending && t('待换算')
     ].filter(Boolean)
     cards.push(`<article class="day-card">
       <header class="day-head">
-        <h3 aria-label="${dayLabel(day)}"><time datetime="${day}">${month}月${date}日</time><span>${label}</span></h3>
+        <h3 aria-label="${dayLabel(day)}"><time datetime="${day}">${formatDate(day, 'short')}</time><span>${label}</span></h3>
         <p>${totals.map(text => `<span>${text}</span>`).join('')}</p>
       </header>
       <div class="day-rows">${group.slice(0, remaining).map(entry => transaction(entry, state.categories, state.currency, true,
@@ -127,28 +125,31 @@ function dayCards(entries) {
 function home() {
   const active = period()
   const today = tokyoNow().slice(0, 10)
-  const month = state.month === today.slice(0, 7) ? '本月' : `${Number(state.month.slice(5))}月`
-  const periodName = state.range ? '区间' : month
+  const month = formatDate(state.month, 'monthOnly')
+  const thisMonth = state.month === today.slice(0, 7)
+  const periodLabels = state.range ? [t('区间支出'), t('区间收入'), t('区间净收支')]
+    : thisMonth ? [t('本月支出'), t('本月收入'), t('本月净收支')]
+      : [t('{0}支出', month), t('{0}收入', month), t('{0}净收支', month)]
   const entries = state.entries.filter(entry => within(entry, active))
   const totals = summarize(entries, state.currency)
   const daily = summarize(state.entries.filter(entry => entry.at.startsWith(today)), state.currency)
-  return `<div class="page-heading book-heading"><h1>账本</h1>${periodControls()}</div>
+  return `<div class="page-heading book-heading"><h1>${t('账本')}</h1>${periodControls()}</div>
     <div class="book-layout">
       <div class="book-digest">
-        <section class="digest" aria-label="收支摘要">
-          <div class="digest-today"><h2>今日支出</h2><strong>${money(daily.expense, state.currency)}</strong>
-            ${daily.pending ? `<small>${daily.pending} 笔待换算</small>` : ''}</div>
+        <section class="digest" aria-label="${t('收支摘要')}">
+          <div class="digest-today"><h2>${t('今日支出')}</h2><strong>${money(daily.expense, state.currency)}</strong>
+            ${daily.pending ? `<small>${t('{0} 笔待换算', daily.pending)}</small>` : ''}</div>
           <dl class="digest-stats">
-            <div><dt>${periodName}支出</dt><dd>${money(totals.expense, state.currency)}</dd></div>
-            <div><dt>${periodName}收入</dt><dd>${money(totals.income, state.currency)}</dd></div>
-            <div><dt>${periodName}净收支</dt><dd>${money(totals.net, state.currency)}</dd></div>
+            <div><dt>${periodLabels[0]}</dt><dd>${money(totals.expense, state.currency)}</dd></div>
+            <div><dt>${periodLabels[1]}</dt><dd>${money(totals.income, state.currency)}</dd></div>
+            <div><dt>${periodLabels[2]}</dt><dd>${money(totals.net, state.currency)}</dd></div>
           </dl>
         </section>
         ${pendingBanner(totals.pending)}
       </div>
       <section class="book-activity" aria-labelledby="ledger-title">
-        <div class="activity-head"><h2 id="ledger-title" tabindex="-1">流水</h2>
-          ${icoButton('ledger-search-toggle', 'search', state.ledgerSearchOpen ? '关闭搜索' : '搜索流水',
+        <div class="activity-head"><h2 id="ledger-title" tabindex="-1">${t('流水')}</h2>
+          ${icoButton('ledger-search-toggle', 'search', state.ledgerSearchOpen ? t('关闭搜索') : t('搜索流水'),
             `id="ledger-search-toggle" aria-controls="ledger-search-field" aria-expanded="${state.ledgerSearchOpen}"`)}</div>
         ${ledgerTools()}
         <div id="ledger-results">${ledgerResults()}</div>
@@ -161,10 +162,10 @@ function overview() {
   const entries = state.entries.filter(entry => within(entry, range))
   const totals = summarize(entries, state.currency)
   const counts = { expense: entries.filter(entry => entry.direction === 'expense').length, income: entries.filter(entry => entry.direction === 'income').length }
-  return `<div class="page-heading"><div><h1>报表</h1></div>${periodControls()}</div>
+  return `<div class="page-heading"><div><h1>${t('报表')}</h1></div>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
-    <section class="panel"><div class="panel-head"><h2>近期流水</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">查看全部</button></div>
+    <section class="panel"><div class="panel-head"><h2>${t('近期流水')}</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">${t('查看全部')}</button></div>
     <div class="ledger">${entries.length ? entries.slice(0, 5).map(item => transaction(item, state.categories, state.currency)).join('') : emptyLedger(Boolean(state.entries.length))}</div></section>`
 }
 
@@ -183,15 +184,16 @@ function ledgerEntries() {
       entry.categoryId !== state.ledgerCategory && category?.parentId !== state.ledgerCategory) return false
     if (!terms.length) return true
     // Every word must appear in the note, the category, or its parent category.
-    const text = searchText([entry.note, category?.name, lookup.get(category?.parentId)?.name].join(' '))
+    const parent = lookup.get(category?.parentId)
+    const text = searchText([entry.note, categoryName(category), categoryName(parent), category?.name, parent?.name].join(' '))
     return terms.every(term => text.includes(term))
   })
 }
 
 function ledgerCategoryButtonContent() {
   const selected = state.categories.find(item => item.id === state.ledgerCategory)
-  const label = selected?.name ?? (state.ledgerCategory === '' ? '未分类' : '全部分类')
-  return `<span class="sr-only">筛选分类，当前：</span>${selected ? categoryArt(selected.icon, 17, selected.name) : icon('tag', 17)}
+  const label = categoryName(selected) || (state.ledgerCategory === '' ? t('未分类') : t('全部分类'))
+  return `<span class="sr-only">${t('筛选分类，当前：')}</span>${selected ? categoryArt(selected.icon, 17, selected.name) : icon('tag', 17)}
     <span class="ledger-category-label">${escape(label)}</span>${icon('down', 14)}`
 }
 
@@ -202,8 +204,8 @@ function ledgerCategoryChoices() {
   const parentIds = new Set(state.categories.map(item => item.parentId))
   const pick = (item, active, disclosure) => categoryTile(item, active, 'ledger-category-pick', disclosure)
   const shortcuts = [
-    pick({ id: '*', name: '全部分类', icon: 'shapes' }, state.ledgerCategory === null),
-    pick({ id: '', name: '未分类', icon: 'tag' }, state.ledgerCategory === '')
+    pick({ id: '*', name: t('全部分类'), icon: 'shapes' }, state.ledgerCategory === null),
+    pick({ id: '', name: t('未分类'), icon: 'tag' }, state.ledgerCategory === '')
   ].join('')
   const groups = shown.map(direction => {
     const roots = topCategories(direction)
@@ -211,43 +213,43 @@ function ledgerCategoryChoices() {
     const root = roots.find(item => item.id === rootId)
     const kids = root ? children(root.id) : []
     return `<div class="ledger-picker-group">
-      ${shown.length > 1 ? `<h3>${directions[direction]}</h3>` : ''}
-      <div class="category-strip" role="group" aria-label="${directions[direction]}一级分类">
+      ${shown.length > 1 ? `<h3>${directionLabel(direction)}</h3>` : ''}
+      <div class="category-strip" role="group" aria-label="${t('{0}一级分类', directionLabel(direction))}">
         ${roots.map(item => pick(item, item.id === rootId, parentIds.has(item.id) ? ` aria-expanded="${item.id === rootId}"` : '')).join('')}
-        ${kids.length ? `<div id="ledger-filter-children" class="category-children" role="group" aria-label="${escape(root.name)}的二级分类">
+        ${kids.length ? `<div id="ledger-filter-children" class="category-children" role="group" aria-label="${t('{0}的二级分类', escape(categoryName(root)))}">
           ${kids.map(item => pick(item, item.id === state.ledgerCategory)).join('')}</div>` : ''}
       </div></div>`
   }).join('')
-  return `<div class="category-strip" role="group" aria-label="快捷分类">${shortcuts}</div>${groups}`
+  return `<div class="category-strip" role="group" aria-label="${t('快捷分类')}">${shortcuts}</div>${groups}`
 }
 
 function ledgerResults() {
   const filtered = ledgerEntries()
   const sums = summarize(filtered, state.currency)
   const wide = searching() && !state.ledgerDay
-  const scopeName = state.range ? '所选区间' : `${Number(state.month.slice(5))}月`
-  const parts = [`${wide && state.searchAll ? '全部时间 · ' : ''}${filtered.length} 笔`,
-    sums.expense && `支出 ${money(sums.expense, state.currency)}`, sums.income && `收入 ${money(sums.income, state.currency)}`].filter(Boolean)
+  const scopeName = state.range ? t('所选区间') : formatDate(state.month, 'monthOnly')
+  const parts = [t('{0}{1} 笔', wide && state.searchAll ? t('全部时间 · ') : '', filtered.length),
+    sums.expense && t('支出 {0}', money(sums.expense, state.currency)), sums.income && t('收入 {0}', money(sums.income, state.currency))].filter(Boolean)
   return `<div class="result-head"><p>${parts.join(' · ')}
-      ${wide ? `<button type="button" class="plain" data-action="search-scope">${state.searchAll ? `只搜${scopeName}` : '搜索全部时间'}</button>` : ''}</p>
-    ${filtered.length || state.selecting ? `<button class="plain" type="button" data-action="select-mode">${state.selecting ? '完成' : '选择'}</button>` : ''}</div>
+      ${wide ? `<button type="button" class="plain" data-action="search-scope">${state.searchAll ? t('只搜{0}', scopeName) : t('搜索全部时间')}</button>` : ''}</p>
+    ${filtered.length || state.selecting ? `<button class="plain" type="button" data-action="select-mode">${state.selecting ? t('完成') : t('选择')}</button>` : ''}</div>
     <div class="day-stack">${dayCards(filtered)}</div>
-    ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}`
+    ${filtered.length > state.ledgerLimit ? button('more-ledger', t('显示更多')) : ''}`
 }
 
 function ledgerTools() {
   const day = state.ledgerDay
   return `<div class="ledger-tools">
-      <label class="search-field" id="ledger-search-field"${state.ledgerSearchOpen ? '' : ' hidden'}><span class="sr-only">搜索备注或分类</span>
-        <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="搜索备注或分类" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
-      <div class="ledger-filter">${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
+      <label class="search-field" id="ledger-search-field"${state.ledgerSearchOpen ? '' : ' hidden'}><span class="sr-only">${t('搜索备注或分类')}</span>
+        <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="${t('搜索备注或分类')}" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
+      <div class="ledger-filter">${tabs('ledger-direction', { all: t('全部'), expense: directionLabel('expense'), income: directionLabel('income') }, state.ledgerDirection)}
         <button type="button" id="ledger-category-toggle" class="ledger-category-toggle" data-action="ledger-categories-toggle"
           aria-controls="ledger-category-picker" aria-expanded="${state.ledgerCategoriesOpen}">${ledgerCategoryButtonContent()}</button></div>
       <section id="ledger-category-picker" class="ledger-category-picker" aria-labelledby="ledger-picker-title"${state.ledgerCategoriesOpen ? '' : ' hidden'}>
-        <div class="ledger-picker-head"><h3 id="ledger-picker-title">选择分类</h3>${button('ledger-categories-close', '完成', '', '', 'subtle')}</div>
+        <div class="ledger-picker-head"><h3 id="ledger-picker-title">${t('选择分类')}</h3>${button('ledger-categories-close', t('完成'), '', '', 'subtle')}</div>
         <div id="ledger-category-options" class="ledger-category-options">${state.ledgerCategoriesOpen ? ledgerCategoryChoices() : ''}</div>
       </section>
-      ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除日期筛选">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
+      ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="${t('清除日期筛选')}">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
     </div>`
 }
 
@@ -263,7 +265,7 @@ function setLedgerSearchOpen(open) {
   state.ledgerSearchOpen = open
   const trigger = byId('ledger-search-toggle')
   const input = byId('ledger-search')
-  const label = open ? '关闭搜索' : '搜索流水'
+  const label = open ? t('关闭搜索') : t('搜索流水')
   trigger.setAttribute('aria-expanded', String(open))
   trigger.setAttribute('aria-label', label)
   trigger.title = label
@@ -315,18 +317,18 @@ function setLedgerCategoriesOpen(open) {
 
 function categoryPage() {
   const direction = state.categoryDirection
-  const editCategoryButton = (item, className, size, affordance) => `<button type="button" class="${className}" data-action="category-edit" data-value="${escape(item.id)}" aria-label="编辑${escape(item.name)}">
-    ${categoryArt(item.icon, size, item.name)}<span class="category-edit-name">${escape(item.name)}</span>${icon(affordance, 15)}</button>`
+  const editCategoryButton = (item, className, size, affordance) => `<button type="button" class="${className}" data-action="category-edit" data-value="${escape(item.id)}" aria-label="${t('编辑{0}', escape(categoryName(item)))}">
+    ${categoryArt(item.icon, size, item.name)}<span class="category-edit-name">${escape(categoryName(item))}</span>${icon(affordance, 15)}</button>`
   const groups = topCategories(direction).map(item => {
     const tags = children(item.id).map(child => editCategoryButton(child, 'child-category', 18, 'right')).join('')
     return `<section class="panel category-group"><div class="group-head"><h2>${editCategoryButton(item, 'group-title', 23, 'pencil')}</h2>
-      ${icoButton('category-new', 'plus', '新增二级分类', `data-value="${escape(item.id)}"`)}</div>
+      ${icoButton('category-new', 'plus', t('新增二级分类'), `data-value="${escape(item.id)}"`)}</div>
       ${tags ? `<div class="category-rows">${tags}</div>` : ''}</section>`
   })
-  return `<div class="page-heading"><h1>分类</h1>
-    <div class="filter-actions">${tabs('category-direction', { expense: '支出', income: '收入' }, direction)}
-    ${button('category-new', '新增一级分类', '', 'plus', 'primary')}</div></div>
-    ${groups.length ? `<div class="groups">${groups.join('')}</div>` : `<p class="panel fine">还没有${directions[direction]}分类</p>`}`
+  return `<div class="page-heading"><h1>${t('分类')}</h1>
+    <div class="filter-actions">${tabs('category-direction', { expense: t('支出'), income: t('收入') }, direction)}
+    ${button('category-new', t('新增一级分类'), '', 'plus', 'primary')}</div></div>
+    ${groups.length ? `<div class="groups">${groups.join('')}</div>` : `<p class="panel fine">${t('还没有{0}分类', directionLabel(direction))}</p>`}`
 }
 
 function render() {
@@ -353,11 +355,11 @@ function selectionBar() {
   const rows = pickRows()
   const count = state.selected.size
   const all = rows.length > 0 && rows.every(row => state.selected.has(row.dataset.value))
-  bar.innerHTML = `<button type="button" class="plain" data-action="select-mode">取消</button>
-    <span class="select-count" aria-live="polite">已选 ${count} 笔</span>
-    <button type="button" class="plain" data-action="select-all" ${rows.length ? '' : 'disabled'}>${all ? '全不选' : '全选'}</button>
-    <button type="button" class="button" data-action="bulk-category" ${count ? '' : 'disabled'}>${icon('tag', 16)}改分类</button>
-    <button type="button" class="button danger" data-action="delete-selected" ${count ? '' : 'disabled'}>${icon('trash', 16)}删除</button>`
+  bar.innerHTML = `<button type="button" class="plain" data-action="select-mode">${t('取消')}</button>
+    <span class="select-count" aria-live="polite">${t('已选 {0} 笔', count)}</span>
+    <button type="button" class="plain" data-action="select-all" ${rows.length ? '' : 'disabled'}>${all ? t('全不选') : t('全选')}</button>
+    <button type="button" class="button" data-action="bulk-category" ${count ? '' : 'disabled'}>${t('{0}改分类', icon('tag', 16))}</button>
+    <button type="button" class="button danger" data-action="delete-selected" ${count ? '' : 'disabled'}>${t('{0}删除', icon('trash', 16))}</button>`
 }
 
 function stopSelecting() {
@@ -370,7 +372,7 @@ function openBulkCategory() {
   const picked = state.entries.filter(entry => state.selected.has(entry.id))
   const counts = { expense: 0, income: 0 }
   for (const entry of picked) if (entry.direction in counts) counts[entry.direction] += 1
-  if (!counts.expense && !counts.income) { toast('转账没有分类，选中的流水无需修改。'); return }
+  if (!counts.expense && !counts.income) { toast(t('转账没有分类，选中的流水无需修改。')); return }
   bulk = { counts, others: picked.length - counts.expense - counts.income, direction: counts.expense >= counts.income ? 'expense' : 'income', categoryId: undefined }
   renderBulkCategory()
 }
@@ -380,21 +382,21 @@ function renderBulkCategory() {
   const selected = state.categories.find(item => item.id === categoryId)
   const rootId = selected?.parentId ?? selected?.id ?? (categoryId === null ? '' : undefined)
   const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="bulk-pick" data-value="${item.id}">
-    ${categoryArt(item.icon)}<span>${escape(item.name)}</span></button>`
-  const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
+    ${categoryArt(item.icon)}<span>${escape(categoryName(item))}</span></button>`
+  const roots = [...topCategories(direction), { id: '', name: t('未分类'), icon: 'tag' }]
   const root = selected && state.categories.find(item => item.id === rootId)
   const unchanged = counts[direction === 'expense' ? 'income' : 'expense'] + bulk.others
-  const label = categoryId === undefined ? '选择分类' : `改为「${escape(selected?.name ?? '未分类')}」`
-  openDialog('修改分类', `<div class="form-grid bulk-category category-picker" data-direction="${direction}">
-    ${counts.expense && counts.income ? tabs('bulk-direction', { expense: `支出 ${counts.expense} 笔`, income: `收入 ${counts.income} 笔` }, direction) : ''}
-    <p class="fine">修改 ${counts[direction]} 笔${directions[direction]}的分类${unchanged ? `，其余 ${unchanged} 笔不变` : ''}。</p>
+  const label = categoryId === undefined ? t('选择分类') : t('改为「{0}」', escape(categoryName(selected) || t('未分类')))
+  openDialog(t('修改分类'), `<div class="form-grid bulk-category category-picker" data-direction="${direction}">
+    ${counts.expense && counts.income ? tabs('bulk-direction', { expense: t('支出 {0} 笔', counts.expense), income: t('收入 {0} 笔', counts.income) }, direction) : ''}
+    <p class="fine">${t('修改 {0} 笔{1}的分类{2}。', counts[direction], directionLabel(direction), unchanged ? t('，其余 {0} 笔不变', unchanged) : '')}</p>
     <div class="category-strip">${roots.map(item => pill(item, item.id === rootId)).join('')}
-      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
-      <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button></div>
+      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="${t('新增{0}一级分类', directionLabel(direction))}">
+      <span class="category-icon">${icon('plus', 18)}</span><span>${t('添加')}</span></button></div>
     ${root ? `<div class="category-children">${children(root.id).map(item => pill(item, item.id === categoryId)).join('')}
-      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(root.id)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button></div>` : ''}
-    ${categoryAdder}
-    <div class="form-footer">${cancelButton}<button type="button" class="button primary" data-action="bulk-apply" ${categoryId === undefined ? 'disabled' : ''}>${label}</button></div>
+      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(root.id)}" aria-label="${t('在{0}下新增二级分类', escape(categoryName(root)))}"><span class="category-icon">${icon('plus', 18)}</span><span>${t('添加')}</span></button></div>` : ''}
+    ${categoryAdder()}
+    <div class="form-footer">${cancelButton()}<button type="button" class="button primary" data-action="bulk-apply" ${categoryId === undefined ? 'disabled' : ''}>${label}</button></div>
   </div>`)
 }
 
@@ -402,13 +404,13 @@ async function applyBulkCategory(control) {
   const { direction, categoryId } = bulk
   if (categoryId === undefined) return
   const targets = state.entries.filter(entry => state.selected.has(entry.id) && entry.direction === direction)
-  const name = state.categories.find(item => item.id === categoryId)?.name ?? '未分类'
+  const name = categoryName(state.categories.find(item => item.id === categoryId)) || t('未分类')
   control.disabled = true
   await saveEntries(targets.filter(entry => entry.categoryId !== categoryId).map(entry => ({ ...entry, categoryId })))
   dialog.close()
   stopSelecting()
   await reload()
-  toast(`已将 ${targets.length} 笔改为「${name}」`)
+  toast(t('已将 {0} 笔改为「{1}」', targets.length, name))
 }
 
 async function reload() {
@@ -447,21 +449,21 @@ function openDialog(title, content, layout = '') {
   dialog.classList.toggle('wide', layout === 'wide')
   dialog.classList.toggle('entry-sheet', layout === 'entry')
   dialog.innerHTML = `<div class="dialog-top"><h2 id="dialog-title">${title}</h2>
-    ${icoButton('close', 'close', '关闭')}</div><div class="dialog-content">${content}</div>`
+    ${icoButton('close', 'close', t('关闭'))}</div><div class="dialog-content">${content}</div>`
   if (!dialog.open) dialog.showModal()
   dialog.scrollTop = 0
 }
 
 const errorPlaceholder = '<p class="form-error" role="alert"></p>'
-const cancelButton = button('close', '取消')
+const cancelButton = () => button('close', t('取消'))
 const submitButton = label => `<button type="submit" class="button primary">${label}</button>`
 const field = (name, content) => `<label class="form-field">${name}${content}</label>`
 const selectField = (label, key, options) => field(label, `<select name="${key}">${options}</select>`)
 const invalidDateRange = '请输入有效日期，结束日期须为开始日期或之后。'
 
 function dateRangeFields({ start, end }) {
-  return `<div class="form-pair">${field('开始日期', `<input name="start" type="date" min="1900-01-01" max="9999-12-31" value="${start}" required>`)}
-    ${field('结束日期', `<input name="end" type="date" min="1900-01-01" max="9999-12-31" value="${end}" required>`)}</div>`
+  return `<div class="form-pair">${field(t('开始日期'), `<input name="start" type="date" min="1900-01-01" max="9999-12-31" value="${start}" required>`)}
+    ${field(t('结束日期'), `<input name="end" type="date" min="1900-01-01" max="9999-12-31" value="${end}" required>`)}</div>`
 }
 
 function dateRangeFromForm(form) {
@@ -471,9 +473,9 @@ function dateRangeFromForm(form) {
 }
 
 function openPeriod() {
-  openDialog('选择日期范围', `<form id="period-form" class="form-grid">
+  openDialog(t('选择日期范围'), `<form id="period-form" class="form-grid">
     ${dateRangeFields(period())}
-    ${errorPlaceholder}<div class="form-footer">${button('this-month', '回到本月', '', '', 'leading')}${cancelButton}${submitButton('应用日期范围')}</div>
+    ${errorPlaceholder}<div class="form-footer">${button('this-month', t('回到本月'), '', '', 'leading')}${cancelButton()}${submitButton(t('应用日期范围'))}</div>
     </form>`)
 }
 
@@ -493,13 +495,13 @@ function openCategoryForm({ parentId, categoryId } = {}) {
   const parent = state.categories.find(item => item.id === (category?.parentId ?? parentId))
   const direction = category?.direction ?? parent?.direction
   const selectedIcon = startingIcon(category ?? parent)
-  const title = `${category ? '编辑' : '新增'}${parent ? '二级' : '一级'}分类`
+  const title = category ? t(parent ? '编辑二级分类' : '编辑一级分类') : t(parent ? '新增二级分类' : '新增一级分类')
   openDialog(title, `<form id="category-form" class="form-grid" data-id="${escape(category?.id)}" data-parent="${escape(parent?.id)}" data-direction="${direction ?? ''}" data-icon-holder data-icon="${selectedIcon}">
-    ${direction ? `<p class="fine">${directions[direction]}${parent ? ` · ${escape(parent.name)}` : ''}</p>` : selectField('收支类型', 'direction', ['expense', 'income'].map(id => option(id, directions[id], state.categoryDirection)).join(''))}
-    ${field('分类名称', `<input name="name" value="${escape(category?.name)}" maxlength="24" required autocomplete="off" placeholder="输入分类名称">`)}
-    <div class="field"><span>图标</span>${iconPicker(selectedIcon)}</div>
+    ${direction ? `<p class="fine">${directionLabel(direction)}${parent ? ` · ${escape(categoryName(parent))}` : ''}</p>` : selectField(t('收支类型'), 'direction', ['expense', 'income'].map(id => option(id, directionLabel(id), state.categoryDirection)).join(''))}
+    ${field(t('分类名称'), `<input name="name" value="${escape(categoryName(category))}" maxlength="24" required autocomplete="off" placeholder="${t('输入分类名称')}">`)}
+    <div class="field"><span>${t('图标')}</span>${iconPicker(selectedIcon)}</div>
     ${errorPlaceholder}<div class="form-footer">
-    ${category ? button('category-delete', '删除分类', '', 'trash', 'danger leading') : ''}${cancelButton}${submitButton('保存分类')}</div></form>`)
+    ${category ? button('category-delete', t('删除分类'), '', 'trash', 'danger leading') : ''}${cancelButton()}${submitButton(t('保存分类'))}</div></form>`)
   if (category) {
     const picker = dialog.querySelector('.icon-picker')
     const active = picker.querySelector('[aria-checked="true"]')
@@ -543,33 +545,33 @@ function selectCategories(form, selectedId = '') {
   section.hidden = direction === 'transfer'
   if (section.hidden) return
   const pill = (item, active, disclosure) => categoryTile(item, active, 'entry-category', disclosure)
-  const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
+  const roots = [...topCategories(direction), { id: '', name: t('未分类'), icon: 'tag' }]
   strip.innerHTML = roots.map(item => pill(item, item.id === rootId, item.id ?
     ` aria-expanded="${item.id === rootId}" aria-controls="entry-subcategories"` : '')).join('') +
-    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
-    <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>`
+    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="${t('新增{0}一级分类', directionLabel(direction))}">
+    <span class="category-icon">${icon('plus', 18)}</span><span>${t('添加')}</span></button>`
   // A chosen top-level category always offers its own add slot, even before it has subcategories.
   const root = roots.find(item => item.id && item.id === rootId)
   childGrid.hidden = !root
   childGrid.innerHTML = root ? children(rootId).map(item => pill(item, item.id === selectedId)).join('') +
-    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>` : ''
+    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="${t('在{0}下新增二级分类', escape(categoryName(root)))}"><span class="category-icon">${icon('plus', 18)}</span><span>${t('添加')}</span></button>` : ''
   strip.append(childGrid)
   placeCategoryChildren(strip)
-  section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
+  section.querySelector('.entry-category-name').textContent = categoryName(selected) || t('未分类')
 }
 
 // The entry sheet and the bulk category dialog share one inline "add category" field.
-const categoryAdder = `<div class="category-adder" data-icon-holder hidden>
-  <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="新分类名称">
-  <button type="button" class="button" data-action="category-add-cancel">取消</button>
-  <button type="button" class="button primary" data-action="category-add-save">添加</button>
+const categoryAdder = () => `<div class="category-adder" data-icon-holder hidden>
+  <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="${t('新分类名称')}">
+  <button type="button" class="button" data-action="category-add-cancel">${t('取消')}</button>
+  <button type="button" class="button primary" data-action="category-add-save">${t('添加')}</button>
   <span class="category-adder-error" role="alert"></span>
   <div class="icon-picker-slot"></div>
 </div>`
 
 // Use the stored icon (or the parent's icon for a new child) and resolve old names in the picker.
 const startingIcon = category => category ? iconAliases[category.icon] ?? category.icon : 'tag'
-const iconPicker = selected => `<div class="icon-picker" role="radiogroup" aria-label="选择图标">${iconChoices.map(name =>
+const iconPicker = selected => `<div class="icon-picker" role="radiogroup" aria-label="${t('选择图标')}">${iconChoices.map(name =>
   `<button type="button" class="icon-choice" role="radio" aria-checked="${name === selected}" aria-label="${name}" data-action="pick-icon" data-value="${name}">${categoryArt(name)}</button>`).join('')}</div>`
 const pickerDirection = picker => picker.dataset.direction ?? picker.closest('form').elements.direction.value
 
@@ -580,7 +582,7 @@ function openCategoryAdder(picker, parentId) {
   adder.dataset.parent = parent?.id ?? ''
   adder.querySelector('.category-adder-error').textContent = ''
   input.value = ''
-  input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[pickerDirection(picker)]}一级分类`
+  input.placeholder = parent ? t('「{0}」下的新分类', categoryName(parent)) : t('新的{0}一级分类', directionLabel(pickerDirection(picker)))
   adder.dataset.icon = startingIcon(parent)
   adder.querySelector('.icon-picker-slot').innerHTML = iconPicker(adder.dataset.icon)
   if (picker.classList.contains('entry-categories')) {
@@ -604,7 +606,7 @@ async function saveInlineCategory(picker) {
     await reload()
     if (form && byId('entry-form') === form) selectCategories(form, result.id)
     else if (!form && bulk && dialog.contains(picker)) { bulk.categoryId = result.id; renderBulkCategory() }
-    toast('分类已添加')
+    toast(t('分类已添加'))
   } finally { delete adder.dataset.saving }
 }
 
@@ -619,15 +621,16 @@ const screenReview = {
 
 function screenNotice(screen) {
   const duplicate = likelyDuplicate(screen, state.entries)
-  if (!duplicate) return `<p class="screen-review">${icon('scan', 18)}<span>${screenReview[screen.status]}</span></p>`
+  if (!duplicate) return `<p class="screen-review">${icon('scan', 18)}<span>${t(screenReview[screen.status])}</span></p>`
   const category = state.categories.find(item => item.id === duplicate.categoryId)
-  const when = `${Number(duplicate.at.slice(5, 7))}月${Number(duplicate.at.slice(8, 10))}日 ${duplicate.at.slice(11, 16)}`
-  return `<p class="screen-review warn">${icon('scan', 18)}<span>可能已经记过：${when} · ${escape(duplicate.note || category?.name || '未分类')} ${money(duplicate.minor, duplicate.currency)}。确认不是同一笔再保存。</span></p>`
+  const when = `${formatDate(duplicate.at.slice(0, 10), 'short')} ${duplicate.at.slice(11, 16)}`
+  return `<p class="screen-review warn">${icon('scan', 18)}<span>${t('可能已经记过：{0} · {1} {2}。确认不是同一笔再保存。', when, escape(duplicate.note || categoryName(category) || t('未分类')), money(duplicate.minor, duplicate.currency))}</span></p>`
 }
 
 // Transfers are no longer offered, except to keep an existing transfer editable as it is.
-const directionsFor = current => Object.entries(directions).filter(([key]) => key !== 'transfer' || current === 'transfer')
-const dayText = day => !dateTime(day) ? '选择日期' : day === tokyoNow().slice(0, 10) ? '今天' : day.replaceAll('-', '/')
+const directionsFor = current => Object.keys(directions).filter(key => key !== 'transfer' || current === 'transfer')
+  .map(key => [key, directionLabel(key)])
+const dayText = day => !dateTime(day) ? t('选择日期') : day === tokyoNow().slice(0, 10) ? t('今天') : formatDate(day)
 
 function openEntry(id, screen) {
   const entry = state.entries.find(item => item.id === id)
@@ -637,41 +640,41 @@ function openEntry(id, screen) {
   const currency = entry?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
   const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
   const direction = entry?.direction ?? screen?.direction ?? 'expense'
-  const choices = (screen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
+  const choices = (screen ? option('', t('请选择币种'), currency) : '') + currencyOptions(currency)
   const directionChoices = directionsFor(direction).map(([key, label]) => `<label class="entry-direction">
     <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
     <span>${label}</span></label>`).join('')
-  openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
+  openDialog(entry ? t('编辑流水') : screen ? t('核对屏幕账单') : t('记一笔'), `<form id="entry-form" data-id="${entry?.id ?? ''}">
     <div class="entry-content">
     ${screen ? screenNotice(screen) : ''}
     <div class="entry-toolbar">
-      <fieldset class="entry-modes"><legend class="sr-only">收支类型</legend>${directionChoices}</fieldset>
+      <fieldset class="entry-modes"><legend class="sr-only">${t('收支类型')}</legend>${directionChoices}</fieldset>
       <div class="entry-clock">
         <label class="entry-day"><span class="entry-day-text" aria-hidden="true">${dayText(at.slice(0, 10))}</span>${icon('down', 14)}
-          <span class="sr-only">日期 · 东京时间</span>
+          <span class="sr-only">${t('日期 · 东京时间')}</span>
           <input name="day" type="date" min="1900-01-01" max="9999-12-31" value="${at.slice(0, 10)}" required></label>
-        <label><span class="sr-only">时间</span><input name="time" type="time" step="1" value="${at.slice(11)}" required></label>
+        <label><span class="sr-only">${t('时间')}</span><input name="time" type="time" step="1" value="${at.slice(11)}" required></label>
       </div>
     </div>
     <div class="entry-amount">
       <span class="entry-symbol" aria-hidden="true">${currency === 'USD' ? '$' : currency ? '¥' : ''}</span>
-      <label class="entry-amount-input"><span class="sr-only">金额</span>
+      <label class="entry-amount-input"><span class="sr-only">${t('金额')}</span>
         <input name="amount" inputmode="none" value="${escape(amount)}" autocomplete="off" maxlength="24" placeholder="0" required></label>
-      <label class="entry-currency"><span class="sr-only">币种</span><select class="control" name="currency" required>${choices}</select></label>
+      <label class="entry-currency"><span class="sr-only">${t('币种')}</span><select class="control" name="currency" required>${choices}</select></label>
     </div>
     <div class="fx" id="fx-preview" aria-live="polite"></div>
-    <section class="entry-categories category-picker" aria-label="选择分类">
+    <section class="entry-categories category-picker" aria-label="${t('选择分类')}">
       <input type="hidden" name="category">
-      <div class="entry-category-heading"><h3>分类</h3><span class="entry-category-name"></span></div>
+      <div class="entry-category-heading"><h3>${t('分类')}</h3><span class="entry-category-name"></span></div>
       <div class="category-strip">
-        <div id="entry-subcategories" class="category-children" role="group" aria-label="二级分类" hidden></div>
+        <div id="entry-subcategories" class="category-children" role="group" aria-label="${t('二级分类')}" hidden></div>
       </div>
-      ${categoryAdder}
+      ${categoryAdder()}
     </section></div>
     <div class="entry-footer">
     <div class="entry-note">
-      <label><span class="sr-only">备注</span><textarea name="note" maxlength="500" rows="1" placeholder="填写备注">${escape(entry?.note ?? screen?.note ?? '')}</textarea></label>
-      ${entry ? icoButton('delete-entry', 'trash', '删除流水', `data-value="${entry.id}"`) : ''}
+      <label><span class="sr-only">${t('备注')}</span><textarea name="note" maxlength="500" rows="1" placeholder="${t('填写备注')}">${escape(entry?.note ?? screen?.note ?? '')}</textarea></label>
+      ${entry ? icoButton('delete-entry', 'trash', t('删除流水'), `data-value="${entry.id}"`) : ''}
     </div>
     ${errorPlaceholder}</div>
     ${keypad(entry || screen)}</form>`, 'entry')
@@ -683,13 +686,13 @@ function openEntry(id, screen) {
 
 function keypad(single) {
   const key = (value, glyph = '', label = '') => `<button class="key" type="button" data-action="entry-key" data-value="${value}"${label ? ` aria-label="${label}"` : ''}>${glyph ? icon(glyph, 20) : value}</button>`
-  return `<div class="entry-keypad" aria-label="数字键盘">
-    ${['7', '8', '9'].map(value => key(value)).join('')}${key('erase', 'erase', '删除一位')}
-    ${['4', '5', '6'].map(value => key(value)).join('')}<button class="key key-clear" type="button" data-action="entry-key" data-value="clear">清空</button>
+  return `<div class="entry-keypad" aria-label="${t('数字键盘')}">
+    ${['7', '8', '9'].map(value => key(value)).join('')}${key('erase', 'erase', t('删除一位'))}
+    ${['4', '5', '6'].map(value => key(value)).join('')}<button class="key key-clear" type="button" data-action="entry-key" data-value="clear">${t('清空')}</button>
     ${['1', '2', '3'].map(value => key(value)).join('')}
-    <button type="submit" class="key key-save" aria-label="保存流水">保存</button>
-    ${single ? '<span></span>' : '<button class="key key-repeat" type="submit" value="repeat">再记一笔</button>'}
-    ${key('0')}${key('.', '', '小数点')}
+    <button type="submit" class="key key-save" aria-label="${t('保存流水')}">${t('保存')}</button>
+    ${single ? '<span></span>' : `<button class="key key-repeat" type="submit" value="repeat">${t('再记一笔')}</button>`}
+    ${key('0')}${key('.', '', t('小数点'))}
   </div>`
 }
 
@@ -736,34 +739,34 @@ function entryDraft(form) {
 }
 
 function openScreenGuide() {
-  openDialog('配置 iPhone 快捷指令', `<div class="form-grid">
+  openDialog(t('配置 iPhone 快捷指令'), `<div class="form-grid">
     <ol class="setup-steps">
-      <li>打开<a href="https://www.icloud.com/shortcuts/a3f25a035d3344d0b328a22d3a278ace" target="_blank" rel="noopener">屏幕记账快捷指令</a>，按提示添加。</li>
-      <li>在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。</li>
-      <li>在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。</li>
-      <li>金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。</li>
+      <li>${t('打开{0}，按提示添加。', `<a href="https://www.icloud.com/shortcuts/a3f25a035d3344d0b328a22d3a278ace" target="_blank" rel="noopener">${t('屏幕记账快捷指令')}</a>`)}</li>
+      <li>${t('在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。')}</li>
+      <li>${t('在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。')}</li>
+      <li>${t('金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。')}</li>
     </ol>
     <div class="form-footer">
-      ${button('screen-input', '返回屏幕记账')}
+      ${button('screen-input', t('返回屏幕记账'))}
     </div></div>`)
 }
 
 function showScreenInput(unread = false) {
   hidePaste()
-  openDialog('屏幕记账', `<form id="screen-form" class="form-grid">
-    <p class="fine">${unread ? '没有读到剪贴板里的账单文字。' : ''}在付款或收款页面运行快捷指令后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。</p>
-    ${field('识别出的文字', `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="粘贴快捷指令识别出的账单文字" spellcheck="false"></textarea>`)}
+  openDialog(t('屏幕记账'), `<form id="screen-form" class="form-grid">
+    <p class="fine">${t('{0}在付款或收款页面运行快捷指令后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。', unread ? t('没有读到剪贴板里的账单文字。') + ' ' : '')}</p>
+    ${field(t('识别出的文字'), `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="${t('粘贴快捷指令识别出的账单文字')}" spellcheck="false"></textarea>`)}
     ${errorPlaceholder}
     <div class="form-footer">
-      ${button('screen-guide', '配置轻点背面', '', '', 'leading')}
-      ${button('screen-read', '读取剪贴板')}
-      ${submitButton('识别并预填')}
+      ${button('screen-guide', t('配置轻点背面'), '', '', 'leading')}
+      ${button('screen-read', t('读取剪贴板'))}
+      ${submitButton(t('识别并预填'))}
     </div></form>`)
 }
 
 function applyScreenText(text) {
   if (!text.trim()) {
-    formError('这里还没有账单文字。运行快捷指令后再粘贴。')
+    formError(t('这里还没有账单文字。运行快捷指令后再粘贴。'))
     return
   }
   const draft = parseScreenText(text)
@@ -812,21 +815,21 @@ function quotePreview(form) {
   const draft = entryDraft(form)
   const selected = form.elements.currency.value
   if (!selected) {
-    text.textContent = '选择币种后查看换算'
+    text.textContent = t('选择币种后查看换算')
     return
   }
   const available = quotesFor(form.elements.day.value)
   const rateLabel = draft?.fx.CNY ?? available.CNY
   if (!draft) {
-    text.innerHTML = rateLabel ? `1 JPY ≈ ${rateLabel.rate} CNY<small>参考汇率 · ${rateLabel.date}</small>`
-      : '输入金额后查看换算'
+    text.innerHTML = rateLabel ? `1 JPY ≈ ${rateLabel.rate} CNY<small>${t('参考汇率 · {0}', rateLabel.date)}</small>`
+      : t('输入金额后查看换算')
     return
   }
   const estimates = []
-  if (selected !== 'JPY') estimates.push(draft.yen == null ? '日元待换算' : `${draft.settlementYen != null ? '日元实扣 ' : '约 '}${money(draft.yen, 'JPY')} JPY`)
-  if (selected !== 'CNY') estimates.push(draft.yuan == null ? '人民币待换算' : `约 ${money(draft.yuan, 'CNY')} CNY`)
+  if (selected !== 'JPY') estimates.push(draft.yen == null ? t('日元待换算') : `${draft.settlementYen != null ? t('日元实扣 ') : t('约 ')}${money(draft.yen, 'JPY')} JPY`)
+  if (selected !== 'CNY') estimates.push(draft.yuan == null ? t('人民币待换算') : t('约 {0} CNY', money(draft.yuan, 'CNY')))
   const dates = [...new Set(Object.values(draft.fx).map(item => item.date))]
-  text.innerHTML = `${estimates.join(' · ')}${dates.length ? `<small>参考汇率日期 · ${dates.join(' / ')}</small>` : '<small>如需参考汇率，联网后会自动补齐</small>'}`
+  text.innerHTML = `${estimates.join(' · ')}${dates.length ? `<small>${t('参考汇率日期 · {0}', dates.join(' / '))}</small>` : `<small>${t('如需参考汇率，联网后会自动补齐')}</small>`}`
 }
 
 function refreshEntryQuote(form, network) {
@@ -850,37 +853,41 @@ async function refreshRates(showStatus = false) {
     })().finally(() => { ratesTask = null })
   }
   const updated = await ratesTask
-  if (showStatus) toast(updated ? `已补齐 ${updated} 笔汇率` : '暂未获取到可补齐的参考汇率')
+  if (showStatus) toast(updated ? t('已补齐 {0} 笔汇率', updated) : t('暂未获取到可补齐的参考汇率'))
 }
 
 function settingsPage() {
   const row = (action, glyph, label) => `<button class="settings-row" type="button" data-action="${action}">
     ${icon(glyph, 19)}<span>${label}</span>${icon('right', 15)}</button>`
-  return `<div class="page-heading"><h1>设置</h1></div>
+  return `<div class="page-heading"><h1>${t('设置')}</h1></div>
     <div class="settings-grid">
-      <section class="panel settings-panel"><h2>数据与备份</h2>
-        <p class="fine">账本保存在当前设备。完整备份包含流水、分类和汇总币种。</p>
-        <div class="settings-rows">${row('export-backup', 'download', '导出完整备份')}${row('export-backup-range', 'calendar', '按日期导出')}${row('pick-backup', 'upload', '恢复备份')}</div>
+      <section class="panel settings-panel"><h2 id="language-heading">${t('语言')}</h2>
+        <select id="app-language" class="control" aria-labelledby="language-heading">${Object.entries(languageOptions).map(([code, name]) =>
+          `<option value="${code}" lang="${code}"${code === language ? ' selected' : ''}>${name}</option>`).join('')}</select>
       </section>
-      <section class="panel settings-panel"><h2>数据管理</h2>
-        <div class="settings-rows">${row('delete-entry-range', 'calendar', '按日期删除流水')}${row('clear-ledger', 'trash', '清除所有数据')}</div>
+      <section class="panel settings-panel"><h2>${t('数据与备份')}</h2>
+        <p class="fine">${t('账本保存在当前设备。完整备份包含流水、分类和汇总币种。')}</p>
+        <div class="settings-rows">${row('export-backup', 'download', t('导出完整备份'))}${row('export-backup-range', 'calendar', t('按日期导出'))}${row('pick-backup', 'upload', t('恢复备份'))}</div>
       </section>
-      <section class="panel settings-panel"><h2>屏幕记账</h2>
-        <div class="settings-rows">${row('screen-guide', 'scan', '配置屏幕记账')}</div>
+      <section class="panel settings-panel"><h2>${t('数据管理')}</h2>
+        <div class="settings-rows">${row('delete-entry-range', 'calendar', t('按日期删除流水'))}${row('clear-ledger', 'trash', t('清除所有数据'))}</div>
       </section>
-      <section class="panel settings-panel"><h2>应用与离线</h2>
+      <section class="panel settings-panel"><h2>${t('屏幕记账')}</h2>
+        <div class="settings-rows">${row('screen-guide', 'scan', t('配置屏幕记账'))}</div>
+      </section>
+      <section class="panel settings-panel"><h2>${t('应用与离线')}</h2>
         <p class="fine" id="settings-offline">${offlineDescription()}</p>
-        ${standalone ? '' : '<p class="fine">在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。</p>'}
+        ${standalone ? '' : `<p class="fine">${t('在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。')}</p>`}
       </section>
     </div>`
 }
 
 async function exportBackup(range) {
   const entries = range ? state.entries.filter(entry => within(entry, range)) : state.entries
-  const date = range ? `${range.start}至${range.end}` : tokyoNow().slice(0, 10)
-  const file = new File([JSON.stringify(backupDocument({ ...state, entries }))], `小日账-${date}.json`, { type: 'application/json' })
+  const date = range ? t('{0}至{1}', range.start, range.end) : tokyoNow().slice(0, 10)
+  const file = new File([JSON.stringify(backupDocument({ ...state, entries }))], t('小日账-{0}.json', date), { type: 'application/json' })
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: '小日账备份' }); return true }
+    try { await navigator.share({ files: [file], title: t('小日账备份') }); return true }
     catch (error) { if (error.name === 'AbortError') return false }
   }
   const url = URL.createObjectURL(file)
@@ -892,7 +899,7 @@ async function exportBackup(range) {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60000)
-  toast('备份文件已生成')
+  toast(t('备份文件已生成'))
   return true
 }
 
@@ -903,16 +910,16 @@ function openDataRange(operation) {
   const months = new Set([current, previous, range.start.slice(0, 7)])
   for (const entry of state.entries) months.add(entry.at.slice(0, 7))
   const choices = [...months].sort().reverse().map(month => {
-    const prefix = month === current ? '本月 · ' : month === previous ? '上月 · ' : ''
-    return option(month, `${prefix}${month.slice(0, 4)}年${Number(month.slice(5))}月`)
+    const prefix = month === current ? t('本月 · ') : month === previous ? t('上月 · ') : ''
+    return option(month, prefix + formatDate(month, 'month'))
   }).join('')
   const deleting = operation === 'delete'
-  openDialog(deleting ? '按日期删除流水' : '按日期导出', `<form id="data-range-form" class="form-grid" data-operation="${operation}">
-    ${selectField('快捷选择月份', 'month', option('', '选择整月') + choices)}
+  openDialog(deleting ? t('按日期删除流水') : t('按日期导出'), `<form id="data-range-form" class="form-grid" data-operation="${operation}">
+    ${selectField(t('快捷选择月份'), 'month', option('', t('选择整月')) + choices)}
     ${dateRangeFields(range)}
-    <p class="fine">按东京日期计算，包含起止两天。${deleting ? '' : '备份包含所选流水与分类。恢复时按备份中有流水的日期替换。'}</p>
+    <p class="fine">${t('按东京日期计算，包含起止两天。{0}', deleting ? '' : t('备份包含所选流水与分类。恢复时按备份中有流水的日期替换。'))}</p>
     <p id="data-range-count" class="fine" aria-live="polite"></p>
-    ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton(deleting ? '下一步' : '导出备份')}</div>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton()}${submitButton(deleting ? t('下一步') : t('导出备份'))}</div>
   </form>`)
   updateDataRange(byId('data-range-form'))
 }
@@ -922,31 +929,31 @@ function updateDataRange(form) {
   const month = range && monthBounds(range.start.slice(0, 7))
   form.elements.month.value = month && month.start === range.start && month.end === range.end ? range.start.slice(0, 7) : ''
   const count = range && state.entries.filter(entry => within(entry, range)).length
-  form.querySelector('#data-range-count').textContent = range ? `所选范围有 ${count} 笔流水` : ''
+  form.querySelector('#data-range-count').textContent = range ? t('所选范围有 {0} 笔流水', count) : ''
 }
 
 async function submitDataRange(form) {
   const range = dateRangeFromForm(form)
-  if (!range) { formError(invalidDateRange); return }
+  if (!range) { formError(t(invalidDateRange)); return }
   if (form.dataset.operation === 'export') {
     if (await exportBackup(range) && byId('data-range-form') === form && dialog.open) dialog.close()
     return
   }
   const ids = state.entries.filter(entry => within(entry, range)).map(entry => entry.id)
-  if (!ids.length) { formError('所选日期范围没有流水。'); return }
-  if (!confirm(`删除 ${range.start} 至 ${range.end} 的 ${ids.length} 笔流水？\n此操作无法撤销。`)) return
+  if (!ids.length) { formError(t('所选日期范围没有流水。')); return }
+  if (!confirm(t('删除 {0} 至 {1} 的 {2} 笔流水？\n此操作无法撤销。', range.start, range.end, ids.length))) return
   const removed = await deleteEntriesInRange(range, ids)
   if (byId('data-range-form') === form && dialog.open) dialog.close()
   stopSelecting()
   await reload()
-  toast(removed ? `已删除 ${removed} 笔流水` : '所选流水已变化，请重新选择日期范围。')
+  toast(removed ? t('已删除 {0} 笔流水', removed) : t('所选流水已变化，请重新选择日期范围。'))
 }
 
 function openClearLedger() {
-  openDialog('清除所有数据', `<form id="clear-ledger-form" class="form-grid">
-    <p>将清除本机账本的 <strong>${state.entries.length}</strong> 笔流水、自定义分类、分类修改和设置。</p>
-    <p class="fine">清除后会恢复预设分类和默认汇总币种。此操作无法撤销。</p>
-    ${errorPlaceholder}<div class="form-footer">${cancelButton}<button class="button danger" type="submit">确认清除</button></div>
+  openDialog(t('清除所有数据'), `<form id="clear-ledger-form" class="form-grid">
+    <p>${t('将清除本机账本的 {0} 笔流水、自定义分类、分类修改和设置。', `<strong>${state.entries.length}</strong>`)}</p>
+    <p class="fine">${t('清除后会恢复预设分类和默认汇总币种。此操作无法撤销。')}</p>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton()}<button class="button danger" type="submit">${t('确认清除')}</button></div>
   </form>`)
 }
 
@@ -965,11 +972,11 @@ async function submitClearLedger(form) {
   hidePaste()
   if (byId('clear-ledger-form') === form && dialog.open) dialog.close()
   await reload()
-  toast('所有账本数据已清除')
+  toast(t('所有账本数据已清除'))
 }
 
 function columnControl(label, name, headers, selected) {
-  return selectField(label, name, option(-1, '选择列', selected) + headers.map((h, i) => option(i, h || `第 ${i + 1} 列`, selected)).join(''))
+  return selectField(label, name, option(-1, t('选择列'), selected) + headers.map((h, i) => option(i, h || t('第 {0} 列', i + 1), selected)).join(''))
 }
 
 function importMapping() {
@@ -977,14 +984,14 @@ function importMapping() {
   const opts = importState.options
   const column = (label, name) => columnControl(label, name, headers, opts[name])
   return `<form id="map-form" class="form-grid">
-    <div class="form-pair">${column('日期与时间', 'date')}
-    ${selectField('金额列格式', 'mode', option('signed', '单一金额列', opts.mode) + option('pair', '分别有出金、入金列', opts.mode))}</div>
-    <div id="map-signed" class="form-pair" ${opts.mode === 'signed' ? '' : 'hidden'}>${column('金额', 'amount')}${column('收支方向（选填）', 'direction')}</div>
-    <div id="map-pair" class="form-pair" ${opts.mode === 'pair' ? '' : 'hidden'}>${column('出金金额', 'debit')}${column('入金金额', 'credit')}</div>
-    <div class="form-pair">${column('币种（选填）', 'currency')}${selectField('未指定币种时使用', 'fixedCurrency', currencyOptions(opts.fixedCurrency))}</div>
-    <div class="form-pair">${column('分类（选填）', 'category')}${column('备注（选填）', 'note')}</div>
-    <p class="fine">日期支持年/月/日或 Excel 日期。单一金额列未指定收支方向时，负数视为支出，正数视为收入。</p>
-    <div class="form-footer">${submitButton('预览导入')}</div>
+    <div class="form-pair">${column(t('日期与时间'), 'date')}
+    ${selectField(t('金额列格式'), 'mode', option('signed', t('单一金额列'), opts.mode) + option('pair', t('分别有出金、入金列'), opts.mode))}</div>
+    <div id="map-signed" class="form-pair" ${opts.mode === 'signed' ? '' : 'hidden'}>${column(t('金额'), 'amount')}${column(t('收支方向（选填）'), 'direction')}</div>
+    <div id="map-pair" class="form-pair" ${opts.mode === 'pair' ? '' : 'hidden'}>${column(t('出金金额'), 'debit')}${column(t('入金金额'), 'credit')}</div>
+    <div class="form-pair">${column(t('币种（选填）'), 'currency')}${selectField(t('未指定币种时使用'), 'fixedCurrency', currencyOptions(opts.fixedCurrency))}</div>
+    <div class="form-pair">${column(t('分类（选填）'), 'category')}${column(t('备注（选填）'), 'note')}</div>
+    <p class="fine">${t('日期支持年/月/日或 Excel 日期。单一金额列未指定收支方向时，负数视为支出，正数视为收入。')}</p>
+    <div class="form-footer">${submitButton(t('预览导入'))}</div>
     </form>`
 }
 
@@ -1002,9 +1009,9 @@ function importEntryDraft(number, entry) {
 
 function importCategoryLabel(id) {
   const category = state.categories.find(item => item.id === id)
-  if (!category) return '未分类'
+  if (!category) return t('未分类')
   const parent = state.categories.find(item => item.id === category.parentId)
-  return parent ? `${parent.name} / ${category.name}` : category.name
+  return parent ? `${categoryName(parent)} / ${categoryName(category)}` : categoryName(category)
 }
 
 function importPreview() {
@@ -1013,35 +1020,35 @@ function importPreview() {
   const ignored = importState.preview.length - rows.length
   const counts = { ready: rows.filter(row => row.entry && !row.duplicate).length, invalid: rows.filter(row => row.error).length, duplicate: rows.filter(row => row.duplicate).length }
   // Offered above and below the rows so a long preview never needs scrolling just to import.
-  const confirm = button('confirm-import', `导入 ${counts.ready} 笔有效流水`, counts.ready ? '' : 'disabled', '', 'primary')
+  const confirm = button('confirm-import', t('导入 {0} 笔有效流水', counts.ready), counts.ready ? '' : 'disabled', '', 'primary')
   return `<section class="import-preview"><div class="import-top"><div class="import-counts">
-    <span class="chip">待导入 ${counts.ready}</span><span class="chip">重复 ${counts.duplicate}</span><span class="chip">有问题 ${counts.invalid}</span>
-    ${ignored ? `<span class="chip">已忽略 ${ignored} 条积分记录</span>` : ''}</div>
+    <span class="chip">${t('待导入 {0}', counts.ready)}</span><span class="chip">${t('重复 {0}', counts.duplicate)}</span><span class="chip">${t('有问题 {0}', counts.invalid)}</span>
+    ${ignored ? `<span class="chip">${t('已忽略 {0} 条积分记录', ignored)}</span>` : ''}</div>
     ${rows.length ? confirm : ''}</div>
     <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, error }) => {
-      if (!entry) return `<div class="import-row"><span>第 ${number} 行</span><span class="form-error">${escape(error)}</span></div>`
+      if (!entry) return `<div class="import-row"><span>${t('第 {0} 行', number)}</span><span class="form-error">${escape(t(error))}</span></div>`
       const { direction, categoryId } = duplicate ? entry : importEntryDraft(number, entry)
-      const meta = `第 ${number} 行 · ${entry.at.replace('T', ' ')} · ${money(entry.minor, entry.currency)} ${entry.currency}`
-      return `<div class="import-row"><div><strong>${escape(entry.note || directions[direction])}</strong><small>${meta}</small>
+      const meta = t('第 {0} 行 · {1} · {2} {3}', number, entry.at.replace('T', ' '), money(entry.minor, entry.currency), entry.currency)
+      return `<div class="import-row"><div><strong>${escape(entry.note || directionLabel(direction))}</strong><small>${meta}</small>
         ${duplicate ? '' : `<small class="import-category"${direction === 'transfer' ? ' hidden' : ''}>${escape(importCategoryLabel(categoryId))}</small>`}</div>
-        ${duplicate ? '<span class="chip">重复</span>' : `<select class="control" aria-label="第 ${number} 行收支类型" data-import-row="${number}">
+        ${duplicate ? `<span class="chip">${t('重复')}</span>` : `<select class="control" aria-label="${t('第 {0} 行收支类型', number)}" data-import-row="${number}">
         ${directionsFor(direction).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
     }).join('')}</div>
-    ${!rows.length ? `<p class="fine">${ignored ? '这张表只有已忽略的积分记录。' : '这张表只有表头。'}</p>` : ''}
-    <div class="form-footer">${rows.length > importState.limit ? button('more-import', '显示更多', '', '', 'leading') : ''}
+    ${!rows.length ? `<p class="fine">${ignored ? t('这张表只有已忽略的积分记录。') : t('这张表只有表头。')}</p>` : ''}
+    <div class="form-footer">${rows.length > importState.limit ? button('more-import', t('显示更多'), '', '', 'leading') : ''}
     ${confirm}</div></section>`
 }
 
 function openImport() {
   const items = importState.file.sheetNames
   const statement = importState.table && statementColumns(importState.table.headers)
-  openDialog('导入账单', `<div class="form-grid">
-    <div class="import-headline"><strong>${escape(importState.file.name)}</strong>${statement ? '<span class="chip">已识别日文账单</span>' : ''}</div>
-    ${items.length ? selectField('工作表', 'sheet', items.map(name => option(name, name, importState.sheet)).join('')).replace('name="sheet"', 'id="sheet" name="sheet"') : ''}
+  openDialog(t('导入账单'), `<div class="form-grid">
+    <div class="import-headline"><strong>${escape(importState.file.name)}</strong>${statement ? `<span class="chip">${t('已识别日文账单')}</span>` : ''}</div>
+    ${items.length ? selectField(t('工作表'), 'sheet', items.map(name => option(name, name, importState.sheet)).join('')).replace('name="sheet"', 'id="sheet" name="sheet"') : ''}
     ${errorPlaceholder}
     ${importState.table && !statement ? importMapping() : ''}
     ${importPreview()}</div>`, 'wide')
-  if (importState.error) formError(importState.error)
+  if (importState.error) formError(t(importState.error))
 }
 
 function chooseSheet(name) {
@@ -1062,11 +1069,11 @@ function chooseSheet(name) {
 function mappingSubmit(form) {
   const value = new FormData(form)
   const keys = ['date', 'amount', 'direction', 'debit', 'credit', 'currency', 'category', 'note']
-  const options = { mode: value.get('mode'), fixedCurrency: value.get('fixedCurrency'), categories: state.categories }
+  const options = { mode: value.get('mode'), fixedCurrency: value.get('fixedCurrency'), categories: state.categories, categoryName }
   for (const key of keys) options[key] = Number(value.get(key))
   const required = options.mode === 'pair' ? ['date', 'debit', 'credit'] : ['date', 'amount']
   if (required.some(key => options[key] < 0) || new Set(required.map(key => options[key])).size !== required.length) {
-    formError('请选择不同的日期和金额列。')
+    formError(t('请选择不同的日期和金额列。'))
     return
   }
   importState.options = options
@@ -1078,7 +1085,7 @@ function mappingSubmit(form) {
 
 async function confirmImport() {
   // Recompute from the current mapping so a changed select never imports an old preview.
-  if (byId('map-form')?.dataset.dirty) { formError('列映射已更改，请重新预览。'); return }
+  if (byId('map-form')?.dataset.dirty) { formError(t('列映射已更改，请重新预览。')); return }
   if (importState.saving) return
   importState.saving = true
   const controls = [...dialog.querySelectorAll('[data-action="confirm-import"]')]
@@ -1102,7 +1109,7 @@ async function confirmImport() {
       resetLedgerFilters()
       go('home', true)
     }
-    toast(`已导入 ${added} 笔流水`)
+    toast(t('已导入 {0} 笔流水', added))
     await refreshRates()
   } finally {
     importState.saving = false
@@ -1112,7 +1119,7 @@ async function confirmImport() {
 
 async function submitEntry(form, control) {
   const entry = entryDraft(form)
-  if (!entry) { formError('请输入有效日期和正数金额（日元为整数，人民币和美元最多两位小数）。'); return }
+  if (!entry) { formError(t('请输入有效日期和正数金额（日元为整数，人民币和美元最多两位小数）。')); return }
   const previous = state.entries.find(item => item.id === form.dataset.id)
   const id = previous?.id ?? crypto.randomUUID()
   const createdAt = previous?.createdAt ?? new Date().toISOString()
@@ -1126,25 +1133,28 @@ async function submitEntry(form, control) {
   }
   await reload()
   if (repeat && dialog.open && byId('entry-form') === form) openEntry()
-  toast(previous ? '流水已更新' : '流水已保存')
+  toast(previous ? t('流水已更新') : t('流水已保存'))
   await refreshRates()
 }
 
 async function saveCategoryDraft(parentId, direction, value, chosenIcon, previous) {
-  const name = value === previous?.name ? value : value.normalize('NFKC').trim()
-  if (!name || name.length > 24) return { error: '请输入 1 到 24 个字符的名称。' }
+  const name = previous && value === categoryName(previous) ? previous.name : value.normalize('NFKC').trim()
+  if (!name || name.length > 24) return { error: t('请输入 1 到 24 个字符的名称。') }
+  if (state.categories.some(item => item.id !== previous?.id && item.parentId === parentId && item.direction === direction && categoryName(item) === name)) {
+    return { error: t('同级分类中已有这个名称。') }
+  }
   const parent = state.categories.find(item => item.id === parentId)
   const icon = iconNames.has(chosenIcon) ? chosenIcon : startingIcon(previous ?? parent)
   const category = { id: previous?.id ?? crypto.randomUUID(), parentId, direction, name, icon }
   const result = await saveCategory(category, { editing: Boolean(previous) })
-  if (result === 'duplicate') return { error: '同级分类中已有这个名称。' }
-  if (result === 'missing') return { error: '分类已不存在，请关闭后重试。' }
+  if (result === 'duplicate') return { error: t('同级分类中已有这个名称。') }
+  if (result === 'missing') return { error: t('分类已不存在，请关闭后重试。') }
   return { id: category.id }
 }
 
 async function submitCategory(form) {
   const previous = state.categories.find(item => item.id === form.dataset.id)
-  if (form.dataset.id && !previous) { formError('分类已不存在，请关闭后重试。'); return }
+  if (form.dataset.id && !previous) { formError(t('分类已不存在，请关闭后重试。')); return }
   const direction = form.dataset.direction || form.elements.direction.value
   const result = await saveCategoryDraft(form.dataset.parent || null, direction, form.elements.name.value, form.dataset.icon, previous)
   if (result.error) { formError(result.error); return }
@@ -1152,7 +1162,7 @@ async function submitCategory(form) {
   dialog.close()
   await reload()
   main.querySelector(`[data-action="category-edit"][data-value="${CSS.escape(result.id)}"]`)?.focus({ preventScroll: true })
-  toast('分类已保存')
+  toast(t('分类已保存'))
 }
 
 async function deleteCategoryFromForm(control) {
@@ -1160,8 +1170,8 @@ async function deleteCategoryFromForm(control) {
   if (form.dataset.saving) return
   const category = state.categories.find(item => item.id === form.dataset.id)
   if (!category) return
-  const childrenNotice = category.parentId === null ? '其下的所有二级分类也会一并删除。\n' : ''
-  if (!confirm(`删除「${category.name}」？\n${childrenNotice}相关流水会保留，并归为「未分类」。`)) return
+  const childrenNotice = category.parentId === null ? t('其下的所有二级分类也会一并删除。\n') : ''
+  if (!confirm(t('删除「{0}」？\n{1}相关流水会保留，并归为「未分类」。', categoryName(category), childrenNotice))) return
 
   form.dataset.saving = 'true'
   control.disabled = true
@@ -1170,8 +1180,8 @@ async function deleteCategoryFromForm(control) {
     if (result?.removedIds.includes(state.ledgerCategory)) state.ledgerCategory = null
     await reload()
     if (byId('category-form') === form && dialog.open) dialog.close()
-    const message = result ? '分类已删除' : '分类已不存在'
-    toast(result?.uncategorized ? `${message}，${result.uncategorized} 笔流水已归为未分类` : message)
+    const message = result ? t('分类已删除') : t('分类已不存在')
+    toast(result?.uncategorized ? t('{0}，{1} 笔流水已归为未分类', message, result.uncategorized) : message)
   } finally {
     delete form.dataset.saving
     control.disabled = false
@@ -1180,7 +1190,7 @@ async function deleteCategoryFromForm(control) {
 
 function submitPeriod(form) {
   const range = dateRangeFromForm(form)
-  if (!range) { formError(invalidDateRange); return }
+  if (!range) { formError(t(invalidDateRange)); return }
   state.range = range
   state.month = range.start.slice(0, 7)
   clearDrill()
@@ -1225,11 +1235,11 @@ const actions = {
   'screen-read': readScreenClipboard,
   'screen-guide': openScreenGuide,
   'delete-entry': async ({ value }) => {
-    if (!confirm('删除这笔流水？')) return
+    if (!confirm(t('删除这笔流水？'))) return
     await deleteEntry(value)
     dialog.close()
     await reload()
-    toast('流水已删除')
+    toast(t('流水已删除'))
   },
   'select-mode': () => {
     const starting = !state.selecting
@@ -1255,12 +1265,12 @@ const actions = {
   },
   'delete-selected': async (_, control) => {
     const ids = [...state.selected]
-    if (!ids.length || !confirm(`删除选中的 ${ids.length} 笔流水？删除后无法恢复。`)) return
+    if (!ids.length || !confirm(t('删除选中的 {0} 笔流水？删除后无法恢复。', ids.length))) return
     control.disabled = true
     await deleteEntries(ids)
     stopSelecting()
     await reload()
-    toast(`已删除 ${ids.length} 笔流水`)
+    toast(t('已删除 {0} 笔流水', ids.length))
   },
   'category-new': ({ value }) => openCategoryForm({ parentId: value }),
   'category-edit': ({ value }) => openCategoryForm({ categoryId: value }),
@@ -1342,7 +1352,7 @@ const actions = {
   'retry-rates': () => refreshRates(true),
   'pick-import': () => pickFile('file-import'),
   'more-import': () => {
-    if (byId('map-form')?.dataset.dirty) { formError('列映射已更改，请重新预览。'); return }
+    if (byId('map-form')?.dataset.dirty) { formError(t('列映射已更改，请重新预览。')); return }
     const position = dialog.scrollTop
     importState.limit += 40
     openImport()
@@ -1362,7 +1372,7 @@ const actions = {
       const { restored, latestDate, skippedDates } = await restoreLedger(backup)
       const active = dialog.open && dialog.contains(control)
       if (!restored) {
-        const message = '备份流水与其他日期的现有流水冲突，本次没有替换任何流水。'
+        const message = t('备份流水与其他日期的现有流水冲突，本次没有替换任何流水。')
         if (active) formError(message)
         else toast(message)
         return
@@ -1376,7 +1386,7 @@ const actions = {
         state.range = null
         go('home')
       }
-      toast(`已恢复 ${restored} 笔流水${skippedDates ? `，跳过 ${skippedDates} 个冲突日期` : ''}`)
+      toast(t('已恢复 {0} 笔流水{1}', restored, skippedDates ? t('，跳过 {0} 个冲突日期', skippedDates) : ''))
     } finally { control.disabled = false }
   },
   close: () => dialog.close()
@@ -1384,7 +1394,7 @@ const actions = {
 
 async function handleError(error) {
   console.error(error)
-  formError('操作未完成，请检查设备存储后重试。')
+  formError(t('操作未完成，请检查设备存储后重试。'))
 }
 
 document.addEventListener('click', event => {
@@ -1428,7 +1438,7 @@ dialog.addEventListener('change', event => {
     const category = row.querySelector('.import-category')
     category.hidden = draft.direction === 'transfer'
     category.textContent = importCategoryLabel(draft.categoryId)
-    if (!entry.note) row.querySelector('strong').textContent = directions[draft.direction]
+    if (!entry.note) row.querySelector('strong').textContent = directionLabel(draft.direction)
     return
   }
   const form = control.form
@@ -1479,7 +1489,7 @@ dialog.addEventListener('input', event => {
 byId('file-import').addEventListener('change', async event => {
   const file = event.target.files?.[0]
   if (!file) return
-  openDialog('导入账单', '<p id="import-loading" class="fine">正在读取文件…</p>')
+  openDialog(t('导入账单'), `<p id="import-loading" class="fine">${t('正在读取文件…')}</p>`)
   const indicator = byId('import-loading')
   try {
     const parsed = await readFile(file)
@@ -1489,7 +1499,7 @@ byId('file-import').addEventListener('change', async event => {
     }
   } catch (error) {
     if (dialog.open && byId('import-loading') === indicator) {
-      openDialog('导入账单', `<p class="form-error">${escape(error.message || '无法读取这个表格。')}</p>`)
+      openDialog(t('导入账单'), `<p class="form-error">${escape(error.message ? t(error.message) : t('无法读取这个表格。'))}</p>`)
     }
   } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
@@ -1499,24 +1509,24 @@ byId('file-backup').addEventListener('change', async event => {
   if (!file) return
   pendingBackup = null
   try {
-    if (file.size > 32 * 1024 * 1024) throw new Error('备份文件超过 32 MB。')
+    if (file.size > 32 * 1024 * 1024) throw new Error(t('备份文件超过 32 MB。'))
     const backup = validateBackup(JSON.parse(await file.text()))
     if (event.target.files?.[0] !== file) return
     if (!backup.entries.length) {
-      openDialog('恢复备份', `<p class="fine">这份备份没有流水，没有可恢复的日期。</p><div class="form-footer">${button('close', '关闭')}</div>`)
+      openDialog(t('恢复备份'), `<p class="fine">${t('这份备份没有流水，没有可恢复的日期。')}</p><div class="form-footer">${button('close', t('关闭'))}</div>`)
       return
     }
     pendingBackup = backup
     const plan = planBackupRestore(state.entries, backup.entries)
     const dates = [...new Set(backup.entries.map(entry => entry.at.slice(0, 10)))].sort()
-    const span = dates.length === 1 ? dates[0] : `${dates[0]} 至 ${dates.at(-1)}`
-    openDialog('确认恢复备份', `<div class="form-grid">
-      <p>备份包含 <strong>${backup.entries.length}</strong> 笔流水，共 <strong>${dates.length}</strong> 个日期。</p>
-      <p class="fine">${span}。仅按备份中有流水的东京日期替换，预计替换现有 ${plan.replaceIds.length} 笔流水。</p>
-      ${plan.skippedDates ? `<p class="fine">有 ${plan.skippedDates} 个日期的流水和其他日期冲突，恢复时会跳过。</p>` : ''}
-      ${errorPlaceholder}<div class="form-footer">${cancelButton}${button('confirm-restore', '按日期恢复', plan.entries.length ? '' : 'disabled', '', 'danger')}</div></div>`)
+    const span = dates.length === 1 ? dates[0] : t('{0} 至 {1}', dates[0], dates.at(-1))
+    openDialog(t('确认恢复备份'), `<div class="form-grid">
+      <p>${t('备份包含 {0} 笔流水，共 {1} 个日期。', `<strong>${backup.entries.length}</strong>`, `<strong>${dates.length}</strong>`)}</p>
+      <p class="fine">${t('{0}。仅按备份中有流水的东京日期替换，预计替换现有 {1} 笔流水。', span, plan.replaceIds.length)}</p>
+      ${plan.skippedDates ? `<p class="fine">${t('有 {0} 个日期的流水和其他日期冲突，恢复时会跳过。', plan.skippedDates)}</p>` : ''}
+      ${errorPlaceholder}<div class="form-footer">${cancelButton()}${button('confirm-restore', t('按日期恢复'), plan.entries.length ? '' : 'disabled', '', 'danger')}</div></div>`)
   } catch {
-    if (event.target.files?.[0] === file) openDialog('恢复备份', '<p class="form-error">无法读取备份。请选择由小日账导出的有效 JSON 文件。</p>')
+    if (event.target.files?.[0] === file) openDialog(t('恢复备份'), `<p class="form-error">${t('无法读取备份。请选择由小日账导出的有效 JSON 文件。')}</p>`)
   } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
 
@@ -1546,6 +1556,20 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Enter' && event.target.id === 'ledger-search') event.target.blur()
 })
 
+main.addEventListener('change', event => {
+  const control = event.target
+  if (control.id !== 'app-language' || control.value === language) return
+  try {
+    saveLanguage(control.value)
+    applyLanguage()
+    render()
+    byId('app-language').focus({ preventScroll: true })
+  } catch (error) {
+    control.value = language
+    handleError(error)
+  }
+})
+
 main.addEventListener('input', event => {
   if (event.target.id !== 'ledger-search') return
   state.ledgerQuery = event.target.value
@@ -1560,9 +1584,22 @@ setInterval(() => {
   if (!document.hidden && navigator.onLine) refreshRates().catch(handleError)
 }, 5 * 60 * 1000)
 
+function applyLanguage() {
+  document.documentElement.lang = language
+  document.title = t('小日账')
+  document.querySelector('meta[name="description"]').content = t('小日账，适合 iPhone 的个人收支账本。')
+  for (const id of ['sidebar', 'mobile-nav']) byId(id).setAttribute('aria-label', t('主要导航'))
+  byId('select-bar').setAttribute('aria-label', t('多选操作'))
+  byId('notice').textContent = ''
+  const loading = main.querySelector('.initial')
+  if (loading) loading.textContent = t('正在打开账本…')
+  byId('quick-paste').innerHTML = `<button type="button" class="quick-paste-main" data-action="screen-paste">${t('{0}粘贴屏幕账单', icon('scan', 18))}</button>
+    <button type="button" class="quick-paste-close" data-action="dismiss-paste" aria-label="${t('关闭')}">${icon('close', 16)}</button>`
+}
+
 async function start() {
-  byId('quick-paste').innerHTML = `<button type="button" class="quick-paste-main" data-action="screen-paste">${icon('scan', 18)}粘贴屏幕账单</button>
-    <button type="button" class="quick-paste-close" data-action="dismiss-paste" aria-label="关闭">${icon('close', 16)}</button>`
+  initializeLanguage()
+  applyLanguage()
   try {
     await reload()
     offerPaste()
@@ -1571,12 +1608,12 @@ async function start() {
       navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {
         offlineReady = true
         chrome()
-      }).catch(error => console.warn('离线缓存暂时不可用', error))
+      }).catch(error => console.warn(t('离线缓存暂时不可用'), error))
     }
   } catch (error) {
     console.error(error)
     chrome()
-    main.innerHTML = '<div class="panel"><h1>无法打开账本</h1><p class="fine">请检查浏览器是否允许本地存储，然后重新打开应用。</p></div>'
+    main.innerHTML = `<div class="panel"><h1>${t('无法打开账本')}</h1><p class="fine">${t('请检查浏览器是否允许本地存储，然后重新打开应用。')}</p></div>`
   }
 }
 start()

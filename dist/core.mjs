@@ -238,7 +238,8 @@ export function importRows(table, options) {
       }
       if (!amount) return invalid('金额或收支方向无效')
       const category = String(cell('category') ?? '').normalize('NFKC').trim()
-      const matching = (options.categories ?? []).filter(item => item.direction === amount.direction && item.name === category)
+      const matching = (options.categories ?? []).filter(item => item.direction === amount.direction &&
+        (item.name === category || options.categoryName?.(item)?.normalize('NFKC').trim() === category))
       if (matching.length === 1) categoryId = matching[0].id
     }
     return { number, entry: withQuotes({

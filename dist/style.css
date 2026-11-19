@@ -235,6 +235,7 @@ a.button { text-decoration: none }
 .ledger-filter { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
 .ledger-filter > .tabs { flex: 0 0 clamp(102px, 42%, 162px); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) }
 .ledger-filter .tab { padding-inline: 0; white-space: nowrap }
+html[lang="en"] .ledger-filter > .tabs { flex-basis: clamp(144px, 45%, 180px) }
 .ledger-category-toggle {
   display: flex; align-items: center; gap: 7px; flex: 1 1 132px; min-width: min(100%, 132px); max-width: 168px; min-height: 38px;
   padding: 0 10px; border: 0; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); font-size: 14px;
@@ -316,6 +317,7 @@ a.button { text-decoration: none }
 .settings-grid { display: grid; max-width: 680px; gap: 14px }
 .settings-panel { border: 1px solid var(--line) }
 .settings-panel > .fine { margin-top: 6px }
+#app-language { width: min(100%, 280px); margin-top: 10px }
 .settings-rows { margin-top: 10px; border-top: 1px solid var(--line) }
 .settings-row {
   display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: center; width: 100%; min-height: 48px;
@@ -424,6 +426,7 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
   border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 12.5px; line-height: 1.2;
 }
 .entry-cat > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+html[lang="en"] .entry-cat > span:last-child { white-space: normal; overflow-wrap: anywhere }
 .entry-cat .category-icon { width: 36px; height: 32px }
 .entry-cat[aria-pressed="false"] .category-icon, .icon-choice[aria-checked="false"] .category-icon { color: var(--icon-inactive) }
 .entry-cat[aria-pressed="true"] { color: var(--ink); font-weight: 600 }

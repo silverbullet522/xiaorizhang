@@ -1,4 +1,5 @@
-import { currencies, directions, money, offsetDate } from './core.mjs'
+import { currencies, money, offsetDate } from './core.mjs'
+import { categoryName, directionLabel, formatDate, language, t } from './i18n.mjs'
 import { categoryIconPaths, categoryIconTone } from './icons.mjs'
 
 const paths = {
@@ -30,9 +31,9 @@ export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => (
 export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? categoryIconPaths(name)}</svg>`
 export const categoryArt = (name, size = 22, label) => `<span class="category-icon" data-tone="${categoryIconTone(name, label)}">
   <svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${categoryIconPaths(name)}</svg></span>`
-export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>小日账</span></div>`
+export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>${t('小日账')}</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
-export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, label, selected)).join('')
+export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, t(label), selected)).join('')
 export const icoButton = (action, glyph, label, extra = '') => `<button type="button" class="icon-button" data-action="${action}" aria-label="${label}" title="${label}" ${extra}>${icon(glyph)}</button>`
 export const button = (action, label, extra = '', glyph = '', className = '') => `<button type="button" class="button ${className}" data-action="${action}" ${extra}>${glyph ? icon(glyph, 17) : ''}${label}</button>`
 
@@ -40,31 +41,27 @@ export function tabs(action, values, active) {
   return `<div class="tabs">${Object.entries(values).map(([id, label]) => `<button type="button" class="tab" data-action="${action}" data-value="${id}" aria-pressed="${id === active}">${label}</button>`).join('')}</div>`
 }
 
-export function dayLabel(day) {
-  const [y, m, d] = day.split('-').map(Number)
-  return `${y}年${m}月${d}日`
-}
+export const dayLabel = day => formatDate(day)
 
 export function periodDisplay(range, month) {
-  const [year, number] = month.split('-')
-  const small = text => text.slice(5).replace('-', '/')
+  const small = text => formatDate(text, 'short')
   const selected = range
-    ? (range.start.slice(0, 4) === range.end.slice(0, 4) ? `${small(range.start)} ～ ${small(range.end)}` : `${range.start} ～ ${range.end}`)
-    : `${year}年${Number(number)}月`
+    ? (range.start.slice(0, 4) === range.end.slice(0, 4) ? `${small(range.start)} ～ ${small(range.end)}` : `${formatDate(range.start)} ～ ${formatDate(range.end)}`)
+    : formatDate(month, 'month')
   return `<div class="period">
-    <button data-action="month-prev" type="button" aria-label="上个月">${icon('left', 15)}</button>
-    <button data-action="period" type="button" aria-label="选择日期范围">${icon('calendar', 16)}<span>${selected}</span></button>
-    <button data-action="month-next" type="button" aria-label="下个月">${icon('right', 15)}</button>
+    <button data-action="month-prev" type="button" aria-label="${t('上个月')}">${icon('left', 15)}</button>
+    <button data-action="period" type="button" aria-label="${t('选择日期范围')}">${icon('calendar', 16)}<span>${selected}</span></button>
+    <button data-action="month-next" type="button" aria-label="${t('下个月')}">${icon('right', 15)}</button>
   </div>`
 }
 
 export function summaryCards(summary, currency, counts) {
   const items = [
-    ['net', '净收支', summary.net, '收入 − 支出'],
-    ['expense', '总支出', summary.expense, `${counts.expense} 笔支出`],
-    ['income', '总收入', summary.income, `${counts.income} 笔收入`]
+    ['net', t('净收支'), summary.net, t('收入 − 支出')],
+    ['expense', t('总支出'), summary.expense, t('{0} 笔支出', counts.expense)],
+    ['income', t('总收入'), summary.income, t('{0} 笔收入', counts.income)]
   ]
-  return `<section class="stat-board" aria-label="收支汇总">${items.map(([cls, label, amount, caption]) => `<div class="stat-cell ${cls}">
+  return `<section class="stat-board" aria-label="${t('收支汇总')}">${items.map(([cls, label, amount, caption]) => `<div class="stat-cell ${cls}">
     <span class="stat-label">${label}</span>
     <strong class="stat-value">${money(amount, currency)}</strong>
     <span class="stat-note">${caption}</span>
@@ -85,21 +82,22 @@ export function trend(summary, range, currency, offset) {
   for (const sums of summary.days.values()) peak = Math.max(peak, sums.income, sums.expense)
   const unit = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1
   const top = peak ? Math.ceil(peak / unit) * unit : currency === 'JPY' ? 3000 : 30000
-  const tick = int => new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 }).format(Math.ceil(int / (currency === 'JPY' ? 1 : 100)))
-  const date = day => day.slice(5).replace('-', '/')
+  const compact = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 })
+  const tick = int => compact.format(Math.ceil(int / (currency === 'JPY' ? 1 : 100)))
+  const date = day => formatDate(day, 'short')
   return `<section class="panel">
-    <div class="panel-head"><div><h2>收支走势</h2><p>按日统计</p></div>
+    <div class="panel-head"><div><h2>${t('收支走势')}</h2><p>${t('按日统计')}</p></div>
     ${count > pageSize ? `<div class="inline-actions">
-      ${icoButton('trend-page', 'left', '上一段日期', `data-value="${page - 1}" ${page === 0 ? 'disabled' : ''}`)}
-      ${icoButton('trend-page', 'right', '下一段日期', `data-value="${page + 1}" ${from + days === count ? 'disabled' : ''}`)}
+      ${icoButton('trend-page', 'left', t('上一段日期'), `data-value="${page - 1}" ${page === 0 ? 'disabled' : ''}`)}
+      ${icoButton('trend-page', 'right', t('下一段日期'), `data-value="${page + 1}" ${from + days === count ? 'disabled' : ''}`)}
       </div>` : ''}</div>
-    <div class="legend"><span><i></i>收入</span><span><i class="cost"></i>支出</span></div>
+    <div class="legend"><span><i></i>${t('收入')}</span><span><i class="cost"></i>${t('支出')}</span></div>
     <div class="chart-shell"><div class="chart-ticks" aria-hidden="true">${[1, 2/3, 1/3, 0].map(n => `<span>${tick(top * n)}</span>`).join('')}</div>
     <div class="chart">${series.map(bin => {
-      const label = `${bin.day} 收入 ${money(bin.income, currency)}，支出 ${money(bin.expense, currency)}`
+      const label = t('{0} 收入 {1}，支出 {2}', bin.day, money(bin.income, currency), money(bin.expense, currency))
       return `<button type="button" class="chart-day" data-action="drill-day" data-start="${bin.day}" data-end="${bin.day}" aria-label="${label}" title="${label}" ${bin.income || bin.expense ? '' : 'disabled'}>
         <span class="bar" style="--h:${bin.income / top * 100}%"></span><span class="bar cost" style="--h:${bin.expense / top * 100}%"></span></button>`
-    }).join('')}${series.some(day => day.income || day.expense) ? '' : '<span class="chart-empty">此期间暂无收支</span>'}</div></div>
+    }).join('')}${series.some(day => day.income || day.expense) ? '' : `<span class="chart-empty">${t('此期间暂无收支')}</span>`}</div></div>
     <div class="chart-labels"><span>${date(series[0].day)}</span>${days > 2 ? `<span>${date(series[Math.floor((days - 1) / 2)].day)}</span>` : ''}
     ${days > 1 ? `<span>${date(series.at(-1).day)}</span>` : ''}</div>
     </section>`
@@ -124,29 +122,29 @@ export function breakdown(entries, categories, direction, currency) {
     <span class="stat-track"><i style="--w:${amount / total * 100}%"></i></span>
     </button>`
   const rows = [...buckets].sort((a, b) => b[1].total - a[1].total).map(([id, bucket]) =>
-    row(id, lookup.get(id)?.name ?? '未分类', bucket.total) +
-    [...bucket.children].sort((a, b) => b[1] - a[1]).map(([child, amount]) => row(child, lookup.get(child).name, amount, true)).join('')
+    row(id, categoryName(lookup.get(id)) || t('未分类'), bucket.total) +
+    [...bucket.children].sort((a, b) => b[1] - a[1]).map(([child, amount]) => row(child, categoryName(lookup.get(child)), amount, true)).join('')
   ).join('')
-  return `<section class="panel"><div class="panel-head"><div><h2>分类统计</h2><p>按一级和二级分类</p></div>
-    ${tabs('stats-direction', { expense: '支出', income: '收入' }, direction)}</div>
-    ${rows ? `<div class="category-stats">${rows}</div>` : `<div class="category-fallback"><div class="empty-ring">${icon('tag', 24)}</div><span>此期间暂无${directions[direction]}分类数据</span></div>`}</section>`
+  return `<section class="panel"><div class="panel-head"><div><h2>${t('分类统计')}</h2><p>${t('按一级和二级分类')}</p></div>
+    ${tabs('stats-direction', { expense: t('支出'), income: t('收入') }, direction)}</div>
+    ${rows ? `<div class="category-stats">${rows}</div>` : `<div class="category-fallback"><div class="empty-ring">${icon('tag', 24)}</div><span>${t('此期间暂无{0}分类数据', directionLabel(direction))}</span></div>`}</section>`
 }
 
 // `picked` is undefined outside selection mode, otherwise whether this row is selected.
 export function transaction(entry, categories, reportCurrency, grouped = false, picked) {
   const category = categories.find(item => item.id === entry.categoryId)
   const parent = categories.find(item => item.id === category?.parentId)
-  const selected = entry.direction === 'transfer' ? '转账' : category?.name
-  const title = (grouped ? selected || entry.note : entry.note || selected) || '未分类'
-  const tag = entry.direction === 'transfer' ? '转账' : [parent?.name, category?.name].filter(Boolean).join(' · ') || '未分类'
+  const selected = entry.direction === 'transfer' ? t('转账') : categoryName(category)
+  const title = (grouped ? selected || entry.note : entry.note || selected) || t('未分类')
+  const tag = entry.direction === 'transfer' ? t('转账') : [categoryName(parent), categoryName(category)].filter(Boolean).join(' · ') || t('未分类')
   const time = entry.at.slice(11, 16)
   const detail = grouped ? [time, entry.note !== title ? entry.note : ''].filter(Boolean).join(' · ')
-    : `${tag} · ${entry.at.slice(5, 10).replace('-', '/')} ${time}`
+    : `${tag} · ${formatDate(entry.at.slice(0, 10), 'short')} ${time}`
   const converted = entry[reportCurrency === 'JPY' ? 'yen' : 'yuan']
   const showConverted = (reportCurrency !== entry.currency || converted !== entry.minor) && entry.direction !== 'transfer'
   // The report currency is already shown in the page controls, so only foreign amounts need a code.
   const note = entry.currency !== reportCurrency || showConverted
-    ? `<small>${entry.currency}${showConverted ? ` · ${converted == null ? '待换算' : `约 ${money(converted, reportCurrency)}`}` : ''}</small>`
+    ? `<small>${entry.currency}${showConverted ? ` · ${converted == null ? t('待换算') : t('约 {0}', money(converted, reportCurrency))}` : ''}</small>`
     : ''
   const picking = picked !== undefined
   return `<button type="button" class="transaction${picking ? ' picking' : ''}" data-action="${picking ? 'toggle-select' : 'edit'}" data-value="${escape(entry.id)}"${picking ? ` aria-pressed="${picked}"` : ''}>
@@ -158,8 +156,8 @@ export function transaction(entry, categories, reportCurrency, grouped = false, 
 
 export function emptyLedger(isFiltered) {
   return `<div class="empty"><span class="icon-tile">${icon('ledger', 21)}</span>
-    <strong>${isFiltered ? '没有符合条件的流水' : '还没有流水'}</strong>
-    <p>${isFiltered ? '可调整日期、分类或搜索词。' : '手动记一笔，或导入已有账单。'}</p>
-    ${isFiltered ? '' : `<div class="inline-actions">${button('add', '记一笔', '', 'plus', 'primary')}${button('pick-import', '导入账单', '', 'upload')}</div>`}
+    <strong>${isFiltered ? t('没有符合条件的流水') : t('还没有流水')}</strong>
+    <p>${isFiltered ? t('可调整日期、分类或搜索词。') : t('手动记一笔，或导入已有账单。')}</p>
+    ${isFiltered ? '' : `<div class="inline-actions">${button('add', t('记一笔'), '', 'plus', 'primary')}${button('pick-import', t('导入账单'), '', 'upload')}</div>`}
   </div>`
 }
