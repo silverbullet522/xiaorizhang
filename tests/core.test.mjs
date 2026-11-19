@@ -1,9 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, presetRenames, summarize, tokyoNow, withQuotes
+  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, monthBounds, presetRenames, summarize, tokyoNow, withQuotes, within
 } from '../dist/core.mjs'
 import { iconNames } from '../dist/icons.mjs'
+
+test('整月和单日范围均按东京流水日期包含起止两天', () => {
+  const month = monthBounds('2024-02')
+  assert.deepEqual(month, { start: '2024-02-01', end: '2024-02-29' })
+  assert.equal(within({ at: '2024-02-01T00:00:00' }, month), true)
+  assert.equal(within({ at: '2024-02-29T23:59:59' }, month), true)
+  assert.equal(within({ at: '2024-03-01T00:00:00' }, month), false)
+  const day = { start: '2024-02-29', end: '2024-02-29' }
+  assert.equal(within({ at: '2024-02-29T23:59:59' }, day), true)
+  assert.equal(within({ at: '2024-02-28T23:59:59' }, day), false)
+})
 
 test('预设分类保留旧编号，子分类与上级同为一种收支', () => {
   const byId = new Map(defaults.map(item => [item.id, item]))

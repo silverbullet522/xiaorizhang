@@ -3,10 +3,10 @@ import {
   summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
-  addEntries, backupDocument, completeRates, deleteCategory, deleteEntries, deleteEntry, readLedger, restoreLedger,
+  addEntries, backupDocument, clearLedger, completeRates, deleteCategory, deleteEntries, deleteEntriesInRange, deleteEntry, readLedger, restoreLedger,
   saveCategory, saveCurrency, saveEntries, saveEntry, validateBackup
 } from './storage.mjs'
-import { loadQuotes, quotesFor } from './rates.mjs'
+import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
@@ -457,12 +457,22 @@ const cancelButton = button('close', '取消')
 const submitButton = label => `<button type="submit" class="button primary">${label}</button>`
 const field = (name, content) => `<label class="form-field">${name}${content}</label>`
 const selectField = (label, key, options) => field(label, `<select name="${key}">${options}</select>`)
+const invalidDateRange = '请输入有效日期，结束日期须为开始日期或之后。'
+
+function dateRangeFields({ start, end }) {
+  return `<div class="form-pair">${field('开始日期', `<input name="start" type="date" min="1900-01-01" max="9999-12-31" value="${start}" required>`)}
+    ${field('结束日期', `<input name="end" type="date" min="1900-01-01" max="9999-12-31" value="${end}" required>`)}</div>`
+}
+
+function dateRangeFromForm(form) {
+  const start = form.elements.start.value
+  const end = form.elements.end.value
+  return dateTime(start) && dateTime(end) && start <= end ? { start, end } : null
+}
 
 function openPeriod() {
-  const { start, end } = period()
   openDialog('选择日期范围', `<form id="period-form" class="form-grid">
-    <div class="form-pair">${field('开始日期', `<input name="start" type="date" value="${start}" required>`)}
-    ${field('结束日期', `<input name="end" type="date" value="${end}" required>`)}</div>
+    ${dateRangeFields(period())}
     ${errorPlaceholder}<div class="form-footer">${button('this-month', '回到本月', '', '', 'leading')}${cancelButton}${submitButton('应用日期范围')}</div>
     </form>`)
 }
@@ -851,7 +861,10 @@ function settingsPage() {
     <div class="settings-grid">
       <section class="panel settings-panel"><h2>数据与备份</h2>
         <p class="fine">账本保存在当前设备。完整备份包含流水、分类和汇总币种。</p>
-        <div class="settings-rows">${row('export-backup', 'download', '导出完整备份')}${row('pick-backup', 'upload', '恢复备份')}</div>
+        <div class="settings-rows">${row('export-backup', 'download', '导出完整备份')}${row('export-backup-range', 'calendar', '按日期导出')}${row('pick-backup', 'upload', '恢复备份')}</div>
+      </section>
+      <section class="panel settings-panel"><h2>数据管理</h2>
+        <div class="settings-rows">${row('delete-entry-range', 'calendar', '按日期删除流水')}${row('clear-ledger', 'trash', '清除所有数据')}</div>
       </section>
       <section class="panel settings-panel"><h2>屏幕记账</h2>
         <div class="settings-rows">${row('screen-guide', 'scan', '配置屏幕记账')}</div>
@@ -863,21 +876,97 @@ function settingsPage() {
     </div>`
 }
 
-async function exportBackup() {
-  const file = new File([JSON.stringify(backupDocument(state))], `小日账-${tokyoNow().slice(0, 10)}.json`, { type: 'application/json' })
+async function exportBackup(range) {
+  const entries = range ? state.entries.filter(entry => within(entry, range)) : state.entries
+  const date = range ? `${range.start}至${range.end}` : tokyoNow().slice(0, 10)
+  const file = new File([JSON.stringify(backupDocument({ ...state, entries }))], `小日账-${date}.json`, { type: 'application/json' })
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: '小日账备份' }); return }
-    catch (error) { if (error.name === 'AbortError') return }
+    try { await navigator.share({ files: [file], title: '小日账备份' }); return true }
+    catch (error) { if (error.name === 'AbortError') return false }
   }
   const url = URL.createObjectURL(file)
   const a = document.createElement('a')
   a.href = url
   a.download = file.name
-  main.append(a)
+  const container = dialog.open ? dialog : main
+  container.append(a)
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60000)
   toast('备份文件已生成')
+  return true
+}
+
+function openDataRange(operation) {
+  const range = period()
+  const current = tokyoNow().slice(0, 7)
+  const previous = offsetDate(`${current}-01`, -1).slice(0, 7)
+  const months = new Set([current, previous, range.start.slice(0, 7)])
+  for (const entry of state.entries) months.add(entry.at.slice(0, 7))
+  const choices = [...months].sort().reverse().map(month => {
+    const prefix = month === current ? '本月 · ' : month === previous ? '上月 · ' : ''
+    return option(month, `${prefix}${month.slice(0, 4)}年${Number(month.slice(5))}月`)
+  }).join('')
+  const deleting = operation === 'delete'
+  openDialog(deleting ? '按日期删除流水' : '按日期导出', `<form id="data-range-form" class="form-grid" data-operation="${operation}">
+    ${selectField('快捷选择月份', 'month', option('', '选择整月') + choices)}
+    ${dateRangeFields(range)}
+    <p class="fine">按东京日期计算，包含起止两天。${deleting ? '' : '备份包含所选流水与分类。恢复该备份会替换当前账本。'}</p>
+    <p id="data-range-count" class="fine" aria-live="polite"></p>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton(deleting ? '下一步' : '导出备份')}</div>
+  </form>`)
+  updateDataRange(byId('data-range-form'))
+}
+
+function updateDataRange(form) {
+  const range = dateRangeFromForm(form)
+  const month = range && monthBounds(range.start.slice(0, 7))
+  form.elements.month.value = month && month.start === range.start && month.end === range.end ? range.start.slice(0, 7) : ''
+  const count = range && state.entries.filter(entry => within(entry, range)).length
+  form.querySelector('#data-range-count').textContent = range ? `所选范围有 ${count} 笔流水` : ''
+}
+
+async function submitDataRange(form) {
+  const range = dateRangeFromForm(form)
+  if (!range) { formError(invalidDateRange); return }
+  if (form.dataset.operation === 'export') {
+    if (await exportBackup(range) && byId('data-range-form') === form && dialog.open) dialog.close()
+    return
+  }
+  const ids = state.entries.filter(entry => within(entry, range)).map(entry => entry.id)
+  if (!ids.length) { formError('所选日期范围没有流水。'); return }
+  if (!confirm(`删除 ${range.start} 至 ${range.end} 的 ${ids.length} 笔流水？\n此操作无法撤销。`)) return
+  const removed = await deleteEntriesInRange(range, ids)
+  if (byId('data-range-form') === form && dialog.open) dialog.close()
+  stopSelecting()
+  await reload()
+  toast(removed ? `已删除 ${removed} 笔流水` : '所选流水已变化，请重新选择日期范围。')
+}
+
+function openClearLedger() {
+  openDialog('清除所有数据', `<form id="clear-ledger-form" class="form-grid">
+    <p>将清除本机账本的 <strong>${state.entries.length}</strong> 笔流水、自定义分类、分类修改和设置。</p>
+    <p class="fine">清除后会恢复预设分类和默认汇总币种。此操作无法撤销。</p>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton}<button class="button danger" type="submit">确认清除</button></div>
+  </form>`)
+}
+
+async function submitClearLedger(form) {
+  clearQuoteCache()
+  await clearLedger()
+  if (!importState?.saving) importState = null
+  pendingBackup = null
+  bulk = null
+  state.month = tokyoNow().slice(0, 7)
+  state.range = null
+  state.categoryDirection = 'expense'
+  state.statsDirection = 'expense'
+  resetLedgerFilters()
+  stopSelecting()
+  hidePaste()
+  if (byId('clear-ledger-form') === form && dialog.open) dialog.close()
+  await reload()
+  toast('所有账本数据已清除')
 }
 
 function columnControl(label, name, headers, selected) {
@@ -1089,15 +1178,10 @@ async function deleteCategoryFromForm(control) {
 }
 
 function submitPeriod(form) {
-  const data = new FormData(form)
-  const start = data.get('start')
-  const end = data.get('end')
-  if (!dateTime(start) || !dateTime(end) || start > end) {
-    formError('请输入有效日期，结束日期须为开始日期或之后。')
-    return
-  }
-  state.range = { start, end }
-  state.month = start.slice(0, 7)
+  const range = dateRangeFromForm(form)
+  if (!range) { formError(invalidDateRange); return }
+  state.range = range
+  state.month = range.start.slice(0, 7)
   clearDrill()
   dialog.close()
   render()
@@ -1264,7 +1348,10 @@ const actions = {
     dialog.scrollTop = position
   },
   'confirm-import': () => confirmImport(),
-  'export-backup': exportBackup,
+  'export-backup': () => exportBackup(),
+  'export-backup-range': () => openDataRange('export'),
+  'delete-entry-range': () => openDataRange('delete'),
+  'clear-ledger': openClearLedger,
   'pick-backup': () => pickFile('file-backup'),
   'confirm-restore': async (_, control) => {
     control.disabled = true
@@ -1298,6 +1385,7 @@ document.addEventListener('click', event => {
 
 const forms = {
   'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
+  'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger,
   'screen-form': form => applyScreenText(form.elements.screenText.value)
 }
 dialog.addEventListener('submit', async event => {
@@ -1333,6 +1421,16 @@ dialog.addEventListener('change', event => {
     return
   }
   const form = control.form
+  if (form?.id === 'data-range-form') {
+    if (control.name === 'month' && control.value) {
+      const { start, end } = monthBounds(control.value)
+      form.elements.start.value = start
+      form.elements.end.value = end
+    }
+    formError('')
+    updateDataRange(form)
+    return
+  }
   if (form?.id === 'map-form') {
     form.dataset.dirty = 'true'
     if (control.name === 'mode') {

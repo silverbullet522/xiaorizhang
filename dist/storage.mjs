@@ -1,4 +1,4 @@
-import { currencies, dateTime, defaults, directions, presetRenames, withQuotes } from './core.mjs'
+import { currencies, dateTime, defaults, directions, presetRenames, withQuotes, within } from './core.mjs'
 import { iconNames } from './icons.mjs'
 
 const database = new Promise((resolve, reject) => {
@@ -129,6 +129,37 @@ export const deleteEntries = ids => transact(['entries'], 'readwrite', store => 
   const entries = store('entries')
   for (const id of ids) entries.delete(id)
 })
+
+// Recheck the confirmed rows against the date range in case another tab edited a date.
+export function deleteEntriesInRange(range, ids) {
+  const confirmed = new Set(ids)
+  return transact(['entries'], 'readwrite', (store, done) => {
+    const entries = store('entries')
+    const request = entries.getAll()
+    request.onsuccess = () => {
+      let removed = 0
+      for (const entry of request.result) {
+        if (!confirmed.has(entry.id) || !within(entry, range)) continue
+        entries.delete(entry.id)
+        removed++
+      }
+      done(removed)
+    }
+  })
+}
+
+export function clearLedger() {
+  return transact(['entries', 'categories', 'settings', 'rates'], 'readwrite', store => {
+    const categories = store('categories')
+    const settings = store('settings')
+    store('entries').clear()
+    categories.clear()
+    settings.clear()
+    store('rates').clear()
+    syncPresets(categories, settings)
+  })
+}
+
 export const saveCurrency = currency => transact(['settings'], 'readwrite', store => store('settings').put(currency, 'currency'))
 
 export function saveCategory(category, { editing = false } = {}) {

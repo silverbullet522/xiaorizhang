@@ -6,7 +6,16 @@ const endpoint = 'https://api.frankfurter.dev/v2/rates'
 const cache = new Map()
 const inflight = new Map()
 const maxAge = 60 * 60 * 1000
-const initialized = readRates().then(records => records.forEach(record => cache.set(record.key, record))).catch(() => {})
+let cacheGeneration = 0
+const initialized = readRates().then(records => {
+  if (cacheGeneration === 0) records.forEach(record => cache.set(record.key, record))
+}).catch(() => {})
+
+export function clearQuoteCache() {
+  cacheGeneration++
+  cache.clear()
+  inflight.clear()
+}
 
 export function quotesFor(day) {
   const today = tokyoNow().slice(0, 10)
@@ -34,23 +43,29 @@ async function fetchQuotes(params) {
 }
 
 function shared(key, work) {
-  if (!inflight.has(key)) inflight.set(key, work().finally(() => inflight.delete(key)))
+  if (!inflight.has(key)) {
+    const task = work(cacheGeneration).finally(() => {
+      if (inflight.get(key) === task) inflight.delete(key)
+    })
+    inflight.set(key, task)
+  }
   return inflight.get(key)
 }
 
-async function persist(records) {
+async function persist(records, generation) {
+  if (generation !== cacheGeneration) return
   records.forEach(record => cache.set(record.key, record))
   try { await saveRates(records) } catch { /* Cached quotes remain usable for this session. */ }
 }
 
-async function latest(today) {
+async function latest(today, generation) {
   const quotes = await fetchQuotes({})
   await persist(quotes.filter(quote => quote.date <= today).map(({ quote, rate, date }) => ({
     key: `latest:${quote}`, rate, date, queriedOn: today, fetchedAt: Date.now()
-  })))
+  })), generation)
 }
 
-async function history(days) {
+async function history(days, generation) {
   const from = offsetDate(days[0], -14)
   const to = days.at(-1)
   const quotes = await fetchQuotes({ from, to })
@@ -59,25 +74,26 @@ async function history(days) {
     const quote = grouped[code].findLast(record => record.date <= day)
     return quote ? [{ key: `day:${day}:${code}`, rate: quote.rate, date: quote.date }] : []
   }))
-  await persist(records)
+  await persist(records, generation)
 }
 
 export async function loadQuotes(days) {
+  const generation = cacheGeneration
   await initialized
-  if (!navigator.onLine) return
+  if (generation !== cacheGeneration || !navigator.onLine) return
   const today = tokyoNow().slice(0, 10)
   const dates = [...new Set(days)].sort()
   const tasks = []
   if (dates.includes(today) && codes.some(code => {
     const record = cache.get(`latest:${code}`)
     return record?.queriedOn !== today || Date.now() - record.fetchedAt > maxAge
-  })) tasks.push(shared('latest', () => latest(today)))
+  })) tasks.push(shared('latest', generation => latest(today, generation)))
   const old = dates.filter(day => day < today && codes.some(code => !cache.has(`day:${day}:${code}`)))
   const groups = Map.groupBy ? Map.groupBy(old, day => day.slice(0, 4)) : old.reduce((map, day) => {
     const year = day.slice(0, 4)
     map.set(year, [...(map.get(year) ?? []), day])
     return map
   }, new Map())
-  for (const batch of groups.values()) tasks.push(shared(batch.join(','), () => history(batch)))
+  for (const batch of groups.values()) tasks.push(shared(batch.join(','), generation => history(batch, generation)))
   await Promise.allSettled(tasks)
 }

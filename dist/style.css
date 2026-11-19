@@ -323,6 +323,7 @@ a.button { text-decoration: none }
 }
 .settings-row + .settings-row { border-top: 1px solid var(--line) }
 .settings-row > svg { color: var(--muted) }
+.settings-row[data-action="clear-ledger"], .settings-row[data-action="clear-ledger"] > svg:first-child { color: var(--danger) }
 
 /* Dialogs */
 dialog {
