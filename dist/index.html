@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f5ef">
+  <meta name="description" content="小日账，适合 iPhone 的个人收支账本。">
+  <link rel="manifest" href="./app.webmanifest">
+  <link rel="apple-touch-icon" href="./icons/touch.png">
+  <link rel="icon" href="./icons/touch.png" type="image/png">
+  <link rel="stylesheet" href="./style.css">
+  <title>小日账</title>
+</head>
+<body>
+  <div id="frame">
+    <aside id="sidebar" aria-label="主要导航"></aside>
+    <div id="workspace">
+      <header id="topbar"></header>
+      <main id="main" tabindex="-1"><p class="initial">正在打开账本…</p></main>
+    </div>
+    <nav id="mobile-nav" aria-label="主要导航"></nav>
+  </div>
+  <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="notice" role="status" aria-live="polite"></div>
+  <input id="file-import" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+  <input id="file-backup" type="file" accept=".json,application/json" hidden>
+  <script type="module" src="./app.mjs"></script>
+</body>
+</html>
