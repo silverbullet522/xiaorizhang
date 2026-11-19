@@ -398,6 +398,27 @@ function createCategory(parentId) {
     ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton('保存分类')}</div></form>`)
 }
 
+function placeEntryChildren(strip) {
+  const childGrid = strip.querySelector('.category-children')
+  if (childGrid.hidden || !strip.clientWidth) return
+
+  const buttons = Array.from(strip.children).filter(item => item !== childGrid)
+  const activeIndex = buttons.findIndex(item => item.getAttribute('aria-expanded') === 'true')
+  // Use the rendered track count so the panel follows the selected row at any width.
+  const columns = getComputedStyle(strip).gridTemplateColumns.split(' ').length
+  const rowEnd = buttons[Math.min(buttons.length, (Math.floor(activeIndex / columns) + 1) * columns) - 1]
+  if (rowEnd.nextElementSibling === childGrid) return
+
+  const focused = childGrid.contains(document.activeElement) ? document.activeElement : null
+  rowEnd.after(childGrid)
+  focused?.focus({ preventScroll: true })
+}
+
+window.addEventListener('resize', () => {
+  const strip = dialog.querySelector('.category-strip')
+  if (dialog.open && strip) placeEntryChildren(strip)
+})
+
 function selectCategories(form, selectedId = '') {
   const direction = form.elements.direction.value
   const selected = state.categories.find(item => item.id === selectedId && item.direction === direction)
@@ -405,21 +426,26 @@ function selectCategories(form, selectedId = '') {
   const section = form.querySelector('.entry-categories')
   const strip = section.querySelector('.category-strip')
   const childGrid = section.querySelector('.category-children')
+  const adder = section.querySelector('.category-adder')
   form.elements.category.value = selected?.id ?? ''
-  section.querySelector('.category-adder').hidden = true
+  adder.hidden = true
+  if (adder.parentElement === childGrid) section.append(adder)
   section.hidden = direction === 'transfer'
   if (section.hidden) return
-  const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="entry-category" data-value="${item.id}">
+  const pill = (item, active, disclosure = '') => `<button type="button" class="entry-cat" aria-pressed="${active}"${disclosure} data-action="entry-category" data-value="${escape(item.id)}">
     ${categoryArt(item.icon)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
-  strip.innerHTML = roots.map(item => pill(item, item.id === rootId)).join('') +
+  strip.innerHTML = roots.map(item => pill(item, item.id === rootId, item.id ?
+    ` aria-expanded="${item.id === rootId}" aria-controls="entry-subcategories"` : '')).join('') +
     `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
     <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>`
   // A chosen top-level category always offers its own add slot, even before it has subcategories.
-  const root = state.categories.find(item => item.id === rootId)
+  const root = roots.find(item => item.id && item.id === rootId)
   childGrid.hidden = !root
   childGrid.innerHTML = root ? children(rootId).map(item => pill(item, item.id === selectedId)).join('') +
     `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>` : ''
+  strip.append(childGrid)
+  placeEntryChildren(strip)
   section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
 }
 
@@ -448,6 +474,10 @@ function openCategoryAdder(picker, parentId) {
   input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[pickerDirection(picker)]}一级分类`
   adder.dataset.icon = startingIcon(parent)
   adder.querySelector('.icon-picker-slot').innerHTML = iconPicker(adder.dataset.icon)
+  if (picker.classList.contains('entry-categories')) {
+    const container = parent ? picker.querySelector('.category-children') : picker
+    if (adder.parentElement !== container) container.append(adder)
+  }
   adder.hidden = false
   input.focus()
 }
@@ -524,8 +554,9 @@ function openEntry(id, screen) {
     <section class="entry-categories category-picker" aria-label="选择分类">
       <input type="hidden" name="category">
       <div class="entry-category-heading"><h3>分类</h3><span class="entry-category-name"></span></div>
-      <div class="category-strip" aria-label="一级分类"></div>
-      <div class="category-children" aria-label="二级分类"></div>
+      <div class="category-strip">
+        <div id="entry-subcategories" class="category-children" role="group" aria-label="二级分类" hidden></div>
+      </div>
       ${categoryAdder}
     </section></div>
     <div class="entry-footer">
@@ -941,7 +972,12 @@ const actions = {
     const form = byId('entry-form')
     const group = control.parentElement
     selectCategories(form, value)
-    Array.from(group.children).find(item => item.dataset.value === value)?.focus({ preventScroll: true })
+    const selected = Array.from(group.children).find(item => item.dataset.value === value)
+    selected?.focus({ preventScroll: true })
+    if (selected?.getAttribute('aria-expanded') === 'true') {
+      selected.scrollIntoView({ block: 'nearest' })
+      byId('entry-subcategories').firstElementChild.scrollIntoView({ block: 'nearest' })
+    }
   },
   'screen-paste': pasteFromScreen,
   'dismiss-paste': hidePaste,
