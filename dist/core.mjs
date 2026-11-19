@@ -257,6 +257,38 @@ export function within(entry, range) {
   return day >= range.start && day <= range.end
 }
 
+export function planBackupRestore(current, backup) {
+  const day = entry => entry.at.slice(0, 10)
+  const dates = new Set(backup.map(day))
+  const datesById = new Map(backup.map(entry => [entry.id, day(entry)]))
+  const datesBySource = new Map(backup.filter(entry => entry.sourceKey).map(entry => [entry.sourceKey, day(entry)]))
+  const currentByDate = new Map()
+  const retained = []
+  for (const entry of current) {
+    const date = day(entry)
+    if (!dates.has(date)) { retained.push(entry); continue }
+    if (!currentByDate.has(date)) currentByDate.set(date, [])
+    currentByDate.get(date).push(entry)
+  }
+
+  // Preserve a whole backup date if restoring it would overwrite a row we keep on another date.
+  let skippedDates = 0
+  for (let i = 0; i < retained.length; i++) {
+    const entry = retained[i]
+    for (const date of [datesById.get(entry.id), datesBySource.get(entry.sourceKey)]) {
+      if (!dates.delete(date)) continue
+      skippedDates++
+      for (const row of currentByDate.get(date) ?? []) retained.push(row)
+    }
+  }
+
+  return {
+    dates: [...dates].sort(), skippedDates,
+    entries: backup.filter(entry => dates.has(day(entry))),
+    replaceIds: current.filter(entry => dates.has(day(entry))).map(entry => entry.id)
+  }
+}
+
 export function summarize(entries, currency) {
   const key = currency === 'CNY' ? 'yuan' : 'yen'
   const days = new Map()

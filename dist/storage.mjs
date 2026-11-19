@@ -1,4 +1,4 @@
-import { currencies, dateTime, defaults, directions, presetRenames, withQuotes, within } from './core.mjs'
+import { currencies, dateTime, defaults, directions, planBackupRestore, presetRenames, withQuotes, within } from './core.mjs'
 import { iconNames } from './icons.mjs'
 
 const database = new Promise((resolve, reject) => {
@@ -335,17 +335,74 @@ export function validateBackup(input) {
   return { entries, categories, currency: input.currency, deletedPresets: [...deletedPresets] }
 }
 
+function categoryRestorer(store, current, backup, deletedPresets) {
+  const key = item => JSON.stringify([item.direction, item.parentId, item.name])
+  const byId = new Map(current.map(item => [item.id, item]))
+  const byName = new Map(current.map(item => [key(item), item]))
+  const byPreset = new Map(current.filter(item => item.presetId).map(item => [item.presetId, item]))
+  const fromBackup = new Map(backup.map(item => [item.id, item]))
+  const restoredIds = new Map()
+
+  function restoreCategory(id) {
+    if (id === null) return null
+    if (restoredIds.has(id)) return restoredIds.get(id)
+    const category = fromBackup.get(id)
+    const parentId = restoreCategory(category.parentId)
+    if (category.parentId !== null && parentId === null) { restoredIds.set(id, null); return null }
+
+    const presetId = category.presetId ?? (presetsById.has(id) ? id : null)
+    const record = { id, parentId, direction: category.direction, name: category.name, icon: category.icon }
+    const match = [byId.get(id), byId.get(presetId), byPreset.get(presetId), byName.get(key(record))]
+      .find(item => item?.parentId === parentId && item.direction === record.direction)
+    let localId = match?.id ?? null
+    if (!match && !deletedPresets.has(presetId)) {
+      if (byId.has(id)) record.id = crypto.randomUUID()
+      store.add(record)
+      byId.set(record.id, record)
+      byName.set(key(record), record)
+      localId = record.id
+    }
+    restoredIds.set(id, localId)
+    return localId
+  }
+
+  return restoreCategory
+}
+
 export function restoreLedger(backup) {
-  return transact(['entries', 'categories', 'settings'], 'readwrite', store => {
+  return transact(['entries', 'categories', 'settings'], 'readwrite', (store, done) => {
     const entries = store('entries')
     const categories = store('categories')
-    entries.clear()
-    categories.clear()
-    backup.entries.forEach(item => entries.add(item))
-    backup.categories.forEach(item => categories.add(item))
     const settings = store('settings')
-    settings.put(backup.currency, 'currency')
-    settings.put(backup.deletedPresets ?? [], 'deletedPresets')
-    syncPresets(categories, settings)
+    const currentEntries = entries.getAll()
+    const currentCategories = categories.getAll()
+    const currency = settings.get('currency')
+    const deleted = settings.get('deletedPresets')
+    deleted.onsuccess = () => {
+      const plan = planBackupRestore(currentEntries.result, backup.entries)
+      done({ restored: plan.entries.length, latestDate: plan.dates.at(-1), skippedDates: plan.skippedDates })
+      if (!plan.entries.length) return
+
+      const deletedPresets = new Set(deleted.result ?? [])
+      const fresh = !currentEntries.result.length && currency.result === undefined && !deletedPresets.size &&
+        currentCategories.result.length === defaults.length && currentCategories.result.every(item => {
+          const preset = presetsById.get(item.id)
+          return preset && preset.name === item.name && preset.icon === item.icon && preset.parentId === item.parentId && preset.direction === item.direction && !item.presetId
+        })
+
+      for (const id of plan.replaceIds) entries.delete(id)
+      if (fresh) {
+        // Restore the full category setup when migrating to an untouched ledger.
+        categories.clear()
+        backup.categories.forEach(item => categories.add(item))
+        settings.put(backup.currency, 'currency')
+        settings.put(backup.deletedPresets ?? [], 'deletedPresets')
+        syncPresets(categories, settings)
+        plan.entries.forEach(item => entries.add(item))
+        return
+      }
+      const restoreCategory = categoryRestorer(categories, currentCategories.result, backup.categories, deletedPresets)
+      for (const item of plan.entries) entries.add({ ...item, categoryId: restoreCategory(item.categoryId) })
+    }
   })
 }

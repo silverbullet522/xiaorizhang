@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, monthBounds, presetRenames, summarize, tokyoNow, withQuotes, within
+  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, monthBounds, planBackupRestore, presetRenames, summarize, tokyoNow, withQuotes, within
 } from '../dist/core.mjs'
 import { iconNames } from '../dist/icons.mjs'
 
@@ -14,6 +14,38 @@ test('整月和单日范围均按东京流水日期包含起止两天', () => {
   const day = { start: '2024-02-29', end: '2024-02-29' }
   assert.equal(within({ at: '2024-02-29T23:59:59' }, day), true)
   assert.equal(within({ at: '2024-02-28T23:59:59' }, day), false)
+})
+
+test('恢复备份只替换实际出现的日期，保留间隔日和其他月份', () => {
+  const current = [
+    { id: 'current-july', at: '2026-07-01T23:59:59' },
+    { id: 'current-gap', at: '2026-07-02T12:00:00' },
+    { id: 'current-august', at: '2026-08-01T00:00:00' }
+  ]
+  const backup = [
+    { id: 'backed-up-first', at: '2026-07-01T00:00:00' },
+    { id: 'backed-up-third', at: '2026-07-03T08:30:00' }
+  ]
+  assert.deepEqual(planBackupRestore(current, backup), {
+    dates: ['2026-07-01', '2026-07-03'], skippedDates: 0, entries: backup, replaceIds: ['current-july']
+  })
+  assert.deepEqual(planBackupRestore(current, []).replaceIds, [])
+})
+
+test('恢复备份遇到跨日期标识冲突时保留冲突日期的记录', () => {
+  const current = [
+    { id: 'kept-elsewhere', at: '2026-08-01T08:00:00' },
+    { id: 'held-on-first', sourceKey: 'statement:123', at: '2026-07-01T09:00:00' },
+    { id: 'replace-third', at: '2026-07-03T09:00:00' }
+  ]
+  const backup = [
+    { id: 'kept-elsewhere', at: '2026-07-01T08:00:00' },
+    { id: 'backed-up-second', sourceKey: 'statement:123', at: '2026-07-02T09:00:00' },
+    { id: 'backed-up-third', at: '2026-07-03T08:00:00' }
+  ]
+  assert.deepEqual(planBackupRestore(current, backup), {
+    dates: ['2026-07-03'], skippedDates: 2, entries: [backup[2]], replaceIds: ['replace-third']
+  })
 })
 
 test('预设分类保留旧编号，子分类与上级同为一种收支', () => {

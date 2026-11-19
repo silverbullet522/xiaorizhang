@@ -1,5 +1,5 @@
 import {
-  amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, statementColumns,
+  amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, planBackupRestore, statementColumns,
   summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
@@ -911,7 +911,7 @@ function openDataRange(operation) {
   openDialog(deleting ? '按日期删除流水' : '按日期导出', `<form id="data-range-form" class="form-grid" data-operation="${operation}">
     ${selectField('快捷选择月份', 'month', option('', '选择整月') + choices)}
     ${dateRangeFields(range)}
-    <p class="fine">按东京日期计算，包含起止两天。${deleting ? '' : '备份包含所选流水与分类。恢复该备份会替换当前账本。'}</p>
+    <p class="fine">按东京日期计算，包含起止两天。${deleting ? '' : '备份包含所选流水与分类。恢复时按备份中有流水的日期替换。'}</p>
     <p id="data-range-count" class="fine" aria-live="polite"></p>
     ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton(deleting ? '下一步' : '导出备份')}</div>
   </form>`)
@@ -1354,18 +1354,28 @@ const actions = {
   'clear-ledger': openClearLedger,
   'pick-backup': () => pickFile('file-backup'),
   'confirm-restore': async (_, control) => {
+    const backup = pendingBackup
+    if (!backup) return
     control.disabled = true
     try {
-      await restoreLedger(pendingBackup)
-      pendingBackup = null
-      dialog.close()
+      const { restored, latestDate, skippedDates } = await restoreLedger(backup)
+      const active = dialog.open && dialog.contains(control)
+      if (!restored) {
+        const message = '备份流水与其他日期的现有流水冲突，本次没有替换任何流水。'
+        if (active) formError(message)
+        else toast(message)
+        return
+      }
+      if (pendingBackup === backup) pendingBackup = null
+      if (active) dialog.close()
       await reload()
-      resetLedgerFilters()
-      if (state.entries.length) state.month = state.entries[0].at.slice(0, 7)
-      state.range = null
-      go('home')
-      toast('备份已恢复')
-      await refreshRates()
+      if (active && !dialog.open) {
+        resetLedgerFilters()
+        state.month = latestDate.slice(0, 7)
+        state.range = null
+        go('home')
+      }
+      toast(`已恢复 ${restored} 笔流水${skippedDates ? `，跳过 ${skippedDates} 个冲突日期` : ''}`)
     } finally { control.disabled = false }
   },
   close: () => dialog.close()
@@ -1486,15 +1496,26 @@ byId('file-import').addEventListener('change', async event => {
 byId('file-backup').addEventListener('change', async event => {
   const file = event.target.files?.[0]
   if (!file) return
+  pendingBackup = null
   try {
     if (file.size > 32 * 1024 * 1024) throw new Error('备份文件超过 32 MB。')
-    pendingBackup = validateBackup(JSON.parse(await file.text()))
+    const backup = validateBackup(JSON.parse(await file.text()))
+    if (event.target.files?.[0] !== file) return
+    if (!backup.entries.length) {
+      openDialog('恢复备份', `<p class="fine">这份备份没有流水，没有可恢复的日期。</p><div class="form-footer">${button('close', '关闭')}</div>`)
+      return
+    }
+    pendingBackup = backup
+    const plan = planBackupRestore(state.entries, backup.entries)
+    const dates = [...new Set(backup.entries.map(entry => entry.at.slice(0, 10)))].sort()
+    const span = dates.length === 1 ? dates[0] : `${dates[0]} 至 ${dates.at(-1)}`
     openDialog('确认恢复备份', `<div class="form-grid">
-      <p>备份包含 <strong>${pendingBackup.entries.length}</strong> 笔流水和 <strong>${pendingBackup.categories.length}</strong> 个分类。</p>
-      <p class="fine">恢复会替换当前账本里的 ${state.entries.length} 笔流水与现有分类。</p>
-      ${errorPlaceholder}<div class="form-footer">${cancelButton}${button('confirm-restore', '替换并恢复', '', '', 'danger')}</div></div>`)
+      <p>备份包含 <strong>${backup.entries.length}</strong> 笔流水，共 <strong>${dates.length}</strong> 个日期。</p>
+      <p class="fine">${span}。仅按备份中有流水的东京日期替换，预计替换现有 ${plan.replaceIds.length} 笔流水。</p>
+      ${plan.skippedDates ? `<p class="fine">有 ${plan.skippedDates} 个日期的流水和其他日期冲突，恢复时会跳过。</p>` : ''}
+      ${errorPlaceholder}<div class="form-footer">${cancelButton}${button('confirm-restore', '按日期恢复', plan.entries.length ? '' : 'disabled', '', 'danger')}</div></div>`)
   } catch {
-    openDialog('恢复备份', '<p class="form-error">无法读取备份。请选择由小日账导出的有效 JSON 文件。</p>')
+    if (event.target.files?.[0] === file) openDialog('恢复备份', '<p class="form-error">无法读取备份。请选择由小日账导出的有效 JSON 文件。</p>')
   } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
 
