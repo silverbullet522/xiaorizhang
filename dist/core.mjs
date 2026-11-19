@@ -194,7 +194,8 @@ export function importRows(table, options) {
         const parsedRate = Number(String(cell('rate') ?? '').replace(/,/g, ''))
         sourceRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : null
       }
-      note = [...new Set([cell('merchant'), cell('type')].filter(value => !emptyCell(value)))].join(' · ').slice(0, 500)
+      // The merchant alone is the note; 取引内容 (支払い, チャージ…) only fills in when there is no merchant.
+      note = String([cell('merchant'), cell('type')].find(value => !emptyCell(value)) ?? '').trim().slice(0, 500)
       const id = String(cell('id') ?? '').trim()
       if (!emptyCell(id)) sourceKey = `statement:${id}`
     } else {
