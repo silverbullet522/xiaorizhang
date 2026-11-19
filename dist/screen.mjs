@@ -20,6 +20,26 @@ const received = /(?:退款成功|已退款|退款金[额額]|已退回|已到[�
 const unfinished = /^(?:支付失败|付款失败|交易失败|未支付|待支付|待付款|交易已?取消|交易关闭|決済失敗|支払い失敗|支払い待ち|payment (?:failed|declined|pending|cancelled|canceled))\s*[。.!！]?$/iu
 const statusText = /(?:成功|完了|支払い|支付|付款|退款|交易|订单|訂單|详情|詳情|明細|レシート|receipt|payment|completed|success|total|amount|查看|返回|确认|確認|完成|星期|wallet|钱包|錢包|paypay|alipay|支付宝|支付寶|微信)/iu
 
+const shortcutField = /^\s*(时间|時間|金额|金額|备注|備註)\s*[:：](.*)$/u
+const shortcutKeys = { 时间: 'at', 時間: 'at', 金额: 'amount', 金額: 'amount', 备注: 'note', 備註: 'note' }
+const textLines = text => text.split(/\r\n?|\n/u)
+const normalizedLines = text => textLines(text.normalize('NFKC').replace(/[−–﹣]/g, '-')).map(line => line.trim()).filter(Boolean)
+
+function shortcutFields(text) {
+  const fields = {}
+  let key
+  for (const line of textLines(text)) {
+    const field = shortcutField.exec(line)
+    if (field) {
+      key = shortcutKeys[field[1]]
+      if (fields[key]) return null
+      fields[key] = [field[2]]
+    } else if (key) fields[key].push(line)
+  }
+  if (!fields.at || !fields.amount || !fields.note) return null
+  return Object.fromEntries(Object.entries(fields).map(([name, lines]) => [name, lines.join('\n').trim()]))
+}
+
 function currencyHint(text) {
   const hints = []
   if (/(?:\b(?:CNY|RMB|Alipay)\b|人民币|人民幣|支付宝|支付寶|微信支付|财付通|財付通)/iu.test(text)) hints.push('CNY')
@@ -86,10 +106,8 @@ function merchantName(lines, chosen) {
   return nearby.length === 1 ? nearby[0] : ''
 }
 
-function screenTimestamp(lines) {
-  const row = lines.findIndex(line => timeField.test(line))
-  if (row < 0) return null
-  const stamp = fullStamp.exec(timeField.exec(lines[row])[1] || lines[row + 1] || '')
+function screenTimestamp(value) {
+  const stamp = fullStamp.exec(value)
   if (!stamp) return null
   const local = dateTime(stamp[1])
   if (!local || !stamp[2]) return local
@@ -150,8 +168,10 @@ export function likelyDuplicate(draft, entries, now = Date.now()) {
 }
 
 export function parseScreenText(input) {
-  const lines = String(input ?? '').slice(0, screenTextLimit).normalize('NFKC')
-    .replace(/[−–﹣]/g, '-').split(/\r?\n|\r/u).map(line => line.trim()).filter(Boolean)
+  const source = String(input ?? '').slice(0, screenTextLimit)
+  const fields = shortcutFields(source)
+  // A formatted shortcut amount is independent of numbers, currency names and status words in the note.
+  const lines = normalizedLines(fields ? `金额:\n${fields.amount}` : source)
   const text = lines.join('\n')
   const hint = currencyHint(text)
   const pending = lines.some(line => unfinished.test(line))
@@ -165,12 +185,14 @@ export function parseScreenText(input) {
   const direction = chosen
     ? (received.test(chosen.context) || (chosen.sign !== '-' && (received.test(text) || chosen.sign === '+')) ? 'income' : 'expense')
     : received.test(text) ? 'income' : 'expense'
+  const row = fields ? -1 : lines.findIndex(line => timeField.test(line))
+  const time = fields ? normalizedLines(fields.at).join(' ') : row < 0 ? '' : timeField.exec(lines[row])[1] || lines[row + 1] || ''
   return {
     amount: chosen?.amount ?? '',
     currency: chosen?.currency ?? (chosen ? null : hint),
     direction,
-    note: merchantName(lines, chosen),
-    at: screenTimestamp(lines),
+    note: fields ? fields.note : merchantName(lines, chosen),
+    at: screenTimestamp(time),
     status: pending ? 'unfinished' : conflicting ? 'multiple' : !chosen ? 'missing' : chosen.currency ? 'ready' : 'unknownCurrency'
   }
 }

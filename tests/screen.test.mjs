@@ -79,3 +79,20 @@ test('金额或币种不明时留给用户填写，区分余额和订单号', ()
   assert.equal(noCharge.amount, '')
   assert.equal(parseScreenText('支付金额 HK$128\n实付金额 100 HKD').amount, '')
 })
+
+test('快捷指令的三行字段直接提取时间、金额和备注', () => {
+  const text = '时间：２０２６年１１月２０日 01:50\r\n金额：１，２８０円\r\n备注：便利店（新宿）🍙\r\n订单号：12345'
+  assert.deepEqual(parseScreenText(text), {
+    amount: '1280', currency: 'JPY', direction: 'expense', note: '便利店（新宿）🍙\n订单号：12345',
+    at: '2026-11-20T01:50:00', status: 'ready'
+  })
+})
+
+test('字段值可另起一行，备注里的金额和支付状态不影响识别', () => {
+  const text = '時間:\n2026-11-19T23:55:30+08:00\n金額:\n+24.50\n備註:\n付款失败\n原支付金额 100 CNY'
+  assert.deepEqual(parseScreenText(text), {
+    amount: '24.50', currency: null, direction: 'income', note: '付款失败\n原支付金额 100 CNY',
+    at: '2026-11-20T00:55:30', status: 'unknownCurrency'
+  })
+  assert.equal(parseScreenText('时间：\n金额：\n备注：咖啡 100元').amount, '')
+})

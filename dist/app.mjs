@@ -600,6 +600,9 @@ async function saveInlineCategory(picker) {
 
 const amountText = (minor, currency) => (minor / (currency === 'JPY' ? 1 : 100)).toFixed(currency === 'JPY' ? 0 : 2)
 const screenReview = {
+  reading: '正在读取剪贴板…',
+  unread: '没有读到剪贴板文字。可长按下方框粘贴，或直接填写流水。',
+  edited: '已保留你填写的内容。如需重新识别，可长按下方框粘贴。',
   ready: '请核对屏幕上的金额、币种和收支方向，再保存。',
   unknownCurrency: '已找到金额，请确认并选择币种。',
   multiple: '画面中有多个可能的金额，请填写实际扣款或到账金额。',
@@ -619,21 +622,23 @@ function screenNotice(screen) {
 const directionsFor = current => Object.entries(directions).filter(([key]) => key !== 'transfer' || current === 'transfer')
 const dayText = day => !dateTime(day) ? '选择日期' : day === tokyoNow().slice(0, 10) ? '今天' : day.replaceAll('-', '/')
 
-function openEntry(id, screen) {
+function openEntry(id, { fromScreen = false } = {}) {
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
   hidePaste()
-  const at = entry?.at ?? screen?.at ?? tokyoNow()
-  const currency = entry?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
-  const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
-  const direction = entry?.direction ?? screen?.direction ?? 'expense'
-  const choices = (screen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
+  const at = entry?.at ?? tokyoNow()
+  const currency = entry?.currency ?? 'JPY'
+  const amount = entry ? amountText(entry.minor, currency) : ''
+  const direction = entry?.direction ?? 'expense'
+  const choices = (fromScreen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
   const directionChoices = directionsFor(direction).map(([key, label]) => `<label class="entry-direction">
     <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
     <span>${label}</span></label>`).join('')
-  openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
+  openDialog(entry ? '编辑流水' : fromScreen ? '截屏记账' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
     <div class="entry-content">
-    ${screen ? screenNotice(screen) : ''}
+    ${fromScreen ? `<div id="screen-entry-notice" role="status">${screenNotice({ status: 'reading' })}</div>
+      <label id="screen-entry-fallback" class="form-field screen-entry-paste" hidden><span>屏幕账单文字</span>
+        <textarea id="screen-entry-text" rows="2" maxlength="${screenTextLimit}" spellcheck="false" placeholder="长按此处粘贴"></textarea></label>` : ''}
     <div class="entry-toolbar">
       <fieldset class="entry-modes"><legend class="sr-only">收支类型</legend>${directionChoices}</fieldset>
       <div class="entry-clock">
@@ -660,15 +665,16 @@ function openEntry(id, screen) {
     </section></div>
     <div class="entry-footer">
     <div class="entry-note">
-      <label><span class="sr-only">备注</span><textarea name="note" maxlength="500" rows="1" placeholder="填写备注">${escape(entry?.note ?? screen?.note ?? '')}</textarea></label>
+      <label><span class="sr-only">备注</span><textarea name="note" maxlength="500" rows="1" placeholder="填写备注">${escape(entry?.note ?? '')}</textarea></label>
       ${entry ? icoButton('delete-entry', 'trash', '删除流水', `data-value="${entry.id}"`) : ''}
     </div>
     ${errorPlaceholder}</div>
-    ${keypad(entry || screen)}</form>`, 'entry')
+    ${keypad(entry || fromScreen)}</form>`, 'entry')
   const form = byId('entry-form')
-  selectCategories(form, entry?.categoryId ?? screen?.categoryId)
+  selectCategories(form, entry?.categoryId)
   updateEntryCurrency(form)
-  refreshEntryQuote(form, true)
+  refreshEntryQuote(form, !fromScreen)
+  return form
 }
 
 function keypad(single) {
@@ -730,45 +736,55 @@ function openScreenGuide() {
     <ol class="setup-steps">
       <li>在「快捷指令」新建「小日账·屏幕记账」，依次添加「截屏」（Take Screenshot）、「从图像提取文本」（Extract Text from Image）、「拷贝至剪贴板」（Copy to Clipboard）、「前往主屏幕」（Go to Home Screen）。中间两步分别使用上一步的结果。</li>
       <li>在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。</li>
-      <li>在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。</li>
-      <li>金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。</li>
+      <li>在付款或收款详情上轻点背面两下，打开小日账，点「粘贴屏幕账单」或右上角扫描图标，即可进入记账面板。如果 iPhone 提示确认粘贴，点系统的「粘贴」。</li>
+      <li>支持快捷指令输出「时间：」「金额：」「备注：」三行，也可以粘贴原始截屏文字。核对已填内容和币种后点「保存」。</li>
     </ol>
     <div class="form-footer">
       <a class="button leading" href="shortcuts://create-shortcut">打开快捷指令</a>
-      ${button('screen-input', '返回屏幕记账')}
+      ${button('screen-paste', '开始截屏记账')}
     </div></div>`)
 }
 
-function showScreenInput(unread = false) {
-  hidePaste()
-  openDialog('屏幕记账', `<form id="screen-form" class="form-grid">
-    <p class="fine">${unread ? '没有读到剪贴板里的账单文字。' : ''}在付款或收款页面运行快捷指令后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。</p>
-    ${field('识别出的文字', `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="粘贴快捷指令识别出的账单文字" spellcheck="false"></textarea>`)}
-    ${errorPlaceholder}
-    <div class="form-footer">
-      ${button('screen-guide', '配置轻点背面', '', '', 'leading')}
-      ${button('screen-read', '读取剪贴板')}
-      ${submitButton('识别并预填')}
-    </div></form>`)
+function showScreenPaste(form, screen, offerManualPaste) {
+  form.querySelector('#screen-entry-notice').innerHTML = screenNotice(screen)
+  form.querySelector('#screen-entry-fallback').hidden = !offerManualPaste
 }
 
-function applyScreenText(text) {
-  if (!text.trim()) {
-    formError('这里还没有账单文字。运行快捷指令后再粘贴。')
+function applyScreenText(form, text) {
+  const draft = parseScreenText(text)
+  const data = form.elements
+  const priorDirection = data.direction.value
+  if (draft.amount || draft.direction === 'income') data.direction.value = draft.direction
+  if (draft.amount) data.amount.value = draft.amount
+  if (draft.amount || draft.currency) data.currency.value = draft.currency ?? ''
+  if (draft.note) data.note.value = draft.note.slice(0, data.note.maxLength)
+  if (draft.at) {
+    data.day.value = draft.at.slice(0, 10)
+    data.time.value = draft.at.slice(11)
+    form.querySelector('.entry-day-text').textContent = dayText(data.day.value)
+  }
+  const categoryId = draft.amount || draft.note ? suggestCategory(draft, text, state.entries, state.categories) : null
+  if (categoryId || priorDirection !== data.direction.value) selectCategories(form, categoryId)
+  showScreenPaste(form, draft, !draft.amount)
+  if (draft.amount) form.querySelector('#screen-entry-text').value = ''
+  updateEntryCurrency(form)
+  refreshEntryQuote(form, Boolean(draft.amount))
+}
+
+async function pasteFromScreen() {
+  const form = openEntry(null, { fromScreen: true })
+  const initial = new FormData(form)
+  let text = ''
+  // Start the clipboard read in the same click, while the browser still has user activation.
+  try { text = await navigator.clipboard?.readText?.() ?? '' } catch { /* The browser may refuse clipboard access. */ }
+  if (!dialog.open || byId('entry-form') !== form || form.dataset.saving) return
+  if (!text.trim()) { showScreenPaste(form, { status: 'unread' }, true); return }
+  const current = new FormData(form)
+  if (form.querySelector('.category-adder:not([hidden])') || [...initial].some(([name, value]) => current.get(name) !== value)) {
+    showScreenPaste(form, { status: 'edited' }, true)
     return
   }
-  const draft = parseScreenText(text)
-  openEntry(null, { ...draft, categoryId: suggestCategory(draft, text, state.entries, state.categories) })
-}
-
-// Read the clipboard inside the tap itself; only show the manual paste form when that fails.
-async function pasteFromScreen() {
-  hidePaste()
-  let text = ''
-  try { text = await navigator.clipboard.readText() } catch { /* Denied, unsupported, or the paste prompt was dismissed. */ }
-  if (dialog.open) return
-  if (text.trim()) applyScreenText(text)
-  else showScreenInput(true)
+  applyScreenText(form, text)
 }
 
 function hidePaste() {
@@ -781,19 +797,6 @@ function offerPaste() {
   byId('quick-paste').hidden = false
   clearTimeout(pasteTimer)
   pasteTimer = setTimeout(hidePaste, 12000)
-}
-
-async function readScreenClipboard() {
-  const form = byId('screen-form')
-  if (!navigator.clipboard?.readText) return
-  let text
-  try {
-    text = await navigator.clipboard.readText()
-  } catch {
-    // Safari also supports the system paste menu on the text area.
-    return
-  }
-  if (dialog.open && byId('screen-form') === form) applyScreenText(text)
 }
 
 function quotePreview(form) {
@@ -1120,8 +1123,6 @@ const actions = {
   },
   'screen-paste': pasteFromScreen,
   'dismiss-paste': hidePaste,
-  'screen-input': () => showScreenInput(),
-  'screen-read': readScreenClipboard,
   'screen-guide': openScreenGuide,
   'delete-entry': async ({ value }) => {
     if (!confirm('删除这笔流水？')) return
@@ -1281,8 +1282,7 @@ document.addEventListener('click', event => {
 })
 
 const forms = {
-  'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
-  'screen-form': form => applyScreenText(form.elements.screenText.value)
+  'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit
 }
 dialog.addEventListener('submit', async event => {
   event.preventDefault()
@@ -1338,6 +1338,16 @@ dialog.addEventListener('input', event => {
   const control = event.target
   if (control.form?.id === 'entry-form' && control.name === 'day') control.form.querySelector('.entry-day-text').textContent = dayText(control.value)
   if (control.form?.id === 'entry-form' && control.name === 'amount') refreshEntryQuote(control.form, false)
+})
+
+dialog.addEventListener('paste', event => {
+  const input = event.target
+  if (input.id !== 'screen-entry-text') return
+  const text = event.clipboardData?.getData('text/plain')
+  if (!text?.trim()) return
+  event.preventDefault()
+  input.value = text.slice(0, screenTextLimit)
+  applyScreenText(input.form, text)
 })
 
 byId('file-import').addEventListener('change', async event => {

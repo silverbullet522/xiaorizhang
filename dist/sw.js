@@ -1,5 +1,5 @@
 const prefix = 'hiba-shell-'
-const version = prefix + '20'
+const version = prefix + '21'
 const root = new URL('./', self.location.href)
 const home = root.href
 const index = new URL('index.html', root).href
