@@ -1,5 +1,5 @@
 import { currencies, directions, money, offsetDate } from './core.mjs'
-import { categoryIconPaths } from './icons.mjs'
+import { categoryIconPaths, categoryIconTone } from './icons.mjs'
 
 const paths = {
   logo: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 3v18m3-12h4m-4 4h4m-4 4h2"/>',
@@ -27,9 +27,8 @@ const paths = {
 
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char])
 export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? categoryIconPaths(name)}</svg>`
-const svg = (inner, size) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`
-export const glyph = (name, size = 22) => svg(categoryIconPaths(name), size)
-export const categoryArt = (name, size = 22) => `<span class="category-icon">${glyph(name, size)}</span>`
+export const categoryArt = (name, size = 22, label) => `<span class="category-icon" data-tone="${categoryIconTone(name, label)}">
+  <svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${categoryIconPaths(name)}</svg></span>`
 export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>小日账</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
 export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, label, selected)).join('')
@@ -151,7 +150,7 @@ export function transaction(entry, categories, reportCurrency, grouped = false, 
   const picking = picked !== undefined
   return `<button type="button" class="transaction${picking ? ' picking' : ''}" data-action="${picking ? 'toggle-select' : 'edit'}" data-value="${escape(entry.id)}"${picking ? ` aria-pressed="${picked}"` : ''}>
     ${picking ? `<span class="pick-mark" aria-hidden="true">${icon('check', 14)}</span>` : ''}
-    ${categoryArt(category?.icon ?? (entry.direction === 'transfer' ? 'transfer' : 'tag'))}
+    ${categoryArt(category?.icon ?? (entry.direction === 'transfer' ? 'transfer' : 'tag'), 22, category?.name)}
     <span class="txn-body"><strong class="txn-title">${escape(title)}</strong><span class="txn-meta">${escape(detail)}</span></span>
     <span class="txn-value ${entry.direction === 'income' ? 'benefit' : entry.direction === 'transfer' ? 'transfer' : ''}">${({ income: '+', expense: '−', transfer: '' })[entry.direction]}${money(entry.minor, entry.currency)}${note}</span></button>`
 }

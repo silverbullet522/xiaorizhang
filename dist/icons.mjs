@@ -163,3 +163,16 @@ export const iconAliases = {
 export const iconChoices = Object.keys(categoryIcons)
 export const iconNames = new Set([...iconChoices, ...Object.keys(iconAliases)])
 export const categoryIconPaths = name => categoryIcons[iconAliases[name] ?? name] ?? categoryIcons.tag
+
+const iconTones = new Map(Object.entries({
+  red: 'heart gift mail heart-handshake flower-2 messages-square users baby party-popper',
+  orange: 'utensils utensils-crossed soup coffee cup-soda beer wine cookie candy cake pizza sandwich croissant ice-cream-cone apple carrot egg fish milk popcorn cigarette shopping-bag shopping-cart shirt store gem flame sun',
+  green: 'heart-pulse stethoscope pill syringe activity dumbbell hospital shield shield-check paw-print dog cat bone bird rabbit wallet banknote coins piggy-bank hand-coins chart-line chart-pie trending-up credit-card recycle leaf tree-pine tent mountain tree-palm',
+  purple: 'ferris-wheel gamepad-2 clapperboard film list-music mic guitar ticket puzzle dice-5 palette trophy headphones camera tv sparkles crown scissors hand star'
+}).flatMap(([tone, names]) => names.split(' ').map(name => [name, tone])))
+
+export function categoryIconTone(name, label = '') {
+  if (/约会|红包|礼金/.test(label)) return 'red'
+  if (/外卖/.test(label)) return 'orange'
+  return iconTones.get(iconAliases[name] ?? name) ?? 'blue'
+}

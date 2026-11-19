@@ -21,6 +21,7 @@ const database = new Promise((resolve, reject) => {
 })
 
 const presetVersion = 2
+const presetsById = new Map(defaults.map(item => [item.id, item]))
 
 // Brings older ledgers up to the current presets. Version 2 (one time) renames presets that still carry their old
 // name and gives preset categories their own icons; before it, icons could not be chosen, so these were never edited.
@@ -28,47 +29,53 @@ const presetVersion = 2
 function addMissingDefaults(db) {
   return new Promise(resolve => {
     const tx = db.transaction(['categories', 'settings'], 'readwrite')
-    const store = tx.objectStore('categories')
-    const settings = tx.objectStore('settings')
-    const request = store.getAll()
-    const version = settings.get('presets')
-    // Requests in one transaction finish in order, so the categories are ready when the version arrives.
-    version.onsuccess = () => topUp(request.result, version.result ?? 1)
-    function topUp(existing, from) {
-      const ids = new Set(existing.map(item => item.id))
-      const key = item => JSON.stringify([item.direction, item.parentId, item.name])
-      if (from < presetVersion) {
-        const preset = new Map(defaults.map(item => [item.id, item]))
-        for (const item of existing) {
-          const rename = presetRenames.find(change => change.id === item.id && change.from === item.name)
-          if (rename && !existing.some(other => other !== item && key(other) === key({ ...item, name: rename.to }))) item.name = rename.to
-          if (preset.has(item.id)) item.icon = preset.get(item.id).icon
-          if (rename || preset.has(item.id)) store.put(item)
-        }
-        settings.put(presetVersion, 'presets')
-      }
-      const taken = new Set(existing.map(key))
-      const parents = new Map(existing.filter(item => item.parentId === null).map(item => [item.id, item]))
-      const parentFor = new Map()
-      for (const item of defaults) {
-        if (item.parentId === null) {
-          const match = ids.has(item.id) ? parents.get(item.id) : existing.find(other => other.parentId === null && key(other) === key(item))
-          if (match) { parentFor.set(item.id, match); continue }
-          store.add(item)
-          parentFor.set(item.id, item)
-          taken.add(key(item))
-          continue
-        }
-        const parent = parentFor.get(item.parentId)
-        const child = { ...item, parentId: parent?.id }
-        if (!parent || ids.has(item.id) || taken.has(key(child))) continue
-        store.add(child)
-        taken.add(key(child))
-      }
-    }
+    syncPresets(tx.objectStore('categories'), tx.objectStore('settings'))
     // A failed top-up must never keep the ledger from opening.
     tx.oncomplete = tx.onabort = () => resolve()
   })
+}
+
+function syncPresets(store, settings) {
+  const request = store.getAll()
+  const version = settings.get('presets')
+  version.onsuccess = () => {
+    // Requests in one transaction finish in order, so the categories are ready when the version arrives.
+    const existing = request.result
+    const from = version.result ?? 1
+    const key = item => JSON.stringify([item.direction, item.parentId, item.name])
+    if (from < presetVersion) {
+      for (const item of existing) {
+        const rename = presetRenames.find(change => change.id === item.id && change.from === item.name)
+        if (rename && !existing.some(other => other !== item && key(other) === key({ ...item, name: rename.to }))) item.name = rename.to
+        if (presetsById.has(item.id)) item.icon = presetsById.get(item.id).icon
+        if (rename || presetsById.has(item.id)) store.put(item)
+      }
+      settings.put(presetVersion, 'presets')
+    }
+    const byId = new Map(existing.map(item => [item.id, item]))
+    for (const item of existing) {
+      if (item.presetId && !byId.has(item.presetId)) byId.set(item.presetId, item)
+    }
+    const byName = new Map(existing.map(item => [key(item), item]))
+    const parentFor = new Map()
+    for (const item of defaults) {
+      const parent = parentFor.get(item.parentId)
+      if (item.parentId !== null && !parent) continue
+      const preset = { ...item, parentId: parent?.id ?? null }
+      const match = byId.get(item.id) ?? byName.get(key(preset))
+      if (!match) {
+        store.add(preset)
+        byName.set(key(preset), preset)
+      } else if (!presetsById.has(match.id) && !match.presetId) {
+        // Remember a same-name replacement so renaming it does not bring the preset back.
+        match.presetId = item.id
+        store.put(match)
+      }
+      const category = match ?? preset
+      if (item.parentId === null && category.parentId === null && category.direction === item.direction &&
+          (category.id === item.id || category.presetId === item.id)) parentFor.set(item.id, category)
+    }
+  }
 }
 
 async function transact(names, mode, run) {
@@ -110,15 +117,25 @@ export const deleteEntries = ids => transact(['entries'], 'readwrite', store => 
 })
 export const saveCurrency = currency => transact(['settings'], 'readwrite', store => store('settings').put(currency, 'currency'))
 
-export function saveCategory(category) {
+export function saveCategory(category, { editing = false } = {}) {
   return transact(['categories'], 'readwrite', (store, done) => {
     const target = store('categories')
     const request = target.getAll()
     request.onsuccess = () => {
-      const exists = request.result.some(item => item.parentId === category.parentId &&
-        item.direction === category.direction && item.name === category.name)
-      if (!exists) target.add(category)
-      done(!exists)
+      const categories = request.result
+      const current = editing ? categories.find(item => item.id === category.id) : undefined
+      if (editing && !current) { done('missing'); return }
+      const next = current ? { ...current, name: category.name, icon: category.icon } : category
+      if (next.parentId !== null && !categories.some(item => item.id === next.parentId && item.parentId === null && item.direction === next.direction)) {
+        done('missing')
+        return
+      }
+      const exists = categories.some(item => item.id !== current?.id && item.parentId === next.parentId &&
+        item.direction === next.direction && item.name === next.name)
+      if (exists) { done('duplicate'); return }
+      if (current) target.put(next)
+      else target.add(next)
+      done('saved')
     }
   })
 }
@@ -187,21 +204,29 @@ export function validateBackup(input) {
       !Array.isArray(input.entries) || !Array.isArray(input.categories)) fail()
   const categoryMap = new Map()
   const names = new Set()
+  const representedPresets = new Set()
   const categories = input.categories.map(item => {
-    const { id, parentId, direction, icon, name } = item ?? {}
+    const { id, parentId, direction, icon, name, presetId } = item ?? {}
     const key = JSON.stringify([direction, parentId, name])
     if (!safeId(id) || !(parentId === null || safeId(parentId)) || !['income', 'expense'].includes(direction) ||
         !safeIcons.has(icon) || !shortText(name, 24) || categoryMap.has(id) || names.has(key)) fail()
     const category = { id, parentId, direction, icon, name }
+    if (presetId !== undefined) {
+      const preset = presetsById.get(presetId)
+      if (!preset || preset.direction !== direction || representedPresets.has(presetId)) fail()
+      category.presetId = presetId
+      representedPresets.add(presetId)
+    }
     categoryMap.set(id, category)
     names.add(key)
     return category
   })
   for (const item of categories) {
+    const parent = categoryMap.get(item.parentId)
     if (item.parentId !== null) {
-      const parent = categoryMap.get(item.parentId)
       if (!parent || parent.parentId !== null || parent.direction !== item.direction) fail()
     }
+    if (item.presetId && (categoryMap.has(item.presetId) || presetsById.get(item.presetId).parentId !== (parent?.presetId ?? parent?.id ?? null))) fail()
   }
   const ids = new Set()
   const sources = new Set()
@@ -235,6 +260,8 @@ export function restoreLedger(backup) {
     categories.clear()
     backup.entries.forEach(item => entries.add(item))
     backup.categories.forEach(item => categories.add(item))
-    store('settings').put(backup.currency, 'currency')
+    const settings = store('settings')
+    settings.put(backup.currency, 'currency')
+    syncPresets(categories, settings)
   })
 }

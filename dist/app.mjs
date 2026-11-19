@@ -11,7 +11,7 @@ import { guessColumns, readFile } from './tables.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
-  brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, glyph, icoButton, icon,
+  brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
 } from './ui.mjs'
 
@@ -235,13 +235,15 @@ function refreshLedgerResults() {
 
 function categoryPage() {
   const direction = state.categoryDirection
+  const editCategoryButton = (item, className, size) => `<button type="button" class="${className}" data-action="category-edit" data-value="${escape(item.id)}">
+    ${categoryArt(item.icon, size, item.name)}<span>${escape(item.name)}</span></button>`
   const groups = topCategories(direction).map(item => {
-    const tags = children(item.id).map(child => `<span class="chip">${glyph(child.icon, 15)}${escape(child.name)}</span>`).join('')
-    return `<section class="panel"><div class="group-head">${categoryArt(item.icon)}
-      <h2>${escape(item.name)}</h2>${icoButton('category-new', 'plus', '新增二级分类', `data-value="${item.id}"`)}</div>
+    const tags = children(item.id).map(child => editCategoryButton(child, 'chip', 19)).join('')
+    return `<section class="panel"><div class="group-head"><h2>${editCategoryButton(item, 'group-title', 23)}</h2>
+      ${icoButton('category-new', 'plus', '新增二级分类', `data-value="${escape(item.id)}"`)}</div>
       <div class="chips">${tags || '<span class="fine">还没有二级分类</span>'}</div></section>`
   })
-  return `<div class="page-heading"><div><h1>分类</h1><p>用两级分类整理收入和支出</p></div>
+  return `<div class="page-heading"><div><h1>分类</h1><p>点按分类可修改名称和图标</p></div>
     <div class="filter-actions">${tabs('category-direction', { expense: '支出', income: '收入' }, direction)}
     ${button('category-new', '新增一级分类', '', 'plus', 'primary')}</div></div><div class="groups">${groups.join('')}</div>`
 }
@@ -389,13 +391,23 @@ function changeMonth(delta) {
   render()
 }
 
-function createCategory(parentId) {
-  const parent = state.categories.find(item => item.id === parentId)
-  openDialog(parent ? '新增二级分类' : '新增一级分类', `<form id="category-form" class="form-grid" data-parent="${parent?.id ?? ''}" data-icon-holder data-icon="${startingIcon(parent)}">
-    ${parent ? `<p class="fine">${directions[parent.direction]} · ${escape(parent.name)}</p>` : selectField('收支类型', 'direction', ['expense', 'income'].map(id => option(id, directions[id], state.categoryDirection)).join(''))}
-    ${field('分类名称', '<input name="name" maxlength="24" required placeholder="输入分类名称">')}
-    <div class="field"><span>图标</span>${iconPicker(startingIcon(parent))}</div>
+function openCategoryForm({ parentId, categoryId } = {}) {
+  const category = state.categories.find(item => item.id === categoryId)
+  if (categoryId && !category) return
+  const parent = state.categories.find(item => item.id === (category?.parentId ?? parentId))
+  const direction = category?.direction ?? parent?.direction
+  const selectedIcon = startingIcon(category ?? parent)
+  const title = `${category ? '编辑' : '新增'}${parent ? '二级' : '一级'}分类`
+  openDialog(title, `<form id="category-form" class="form-grid" data-id="${escape(category?.id)}" data-parent="${escape(parent?.id)}" data-direction="${direction ?? ''}" data-icon-holder data-icon="${selectedIcon}">
+    ${direction ? `<p class="fine">${directions[direction]}${parent ? ` · ${escape(parent.name)}` : ''}</p>` : selectField('收支类型', 'direction', ['expense', 'income'].map(id => option(id, directions[id], state.categoryDirection)).join(''))}
+    ${field('分类名称', `<input name="name" value="${escape(category?.name)}" maxlength="24" required autocomplete="off" placeholder="输入分类名称">`)}
+    <div class="field"><span>图标</span>${iconPicker(selectedIcon)}</div>
     ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton('保存分类')}</div></form>`)
+  if (category) {
+    const picker = dialog.querySelector('.icon-picker')
+    const active = picker.querySelector('[aria-checked="true"]')
+    if (active) picker.scrollTop = active.getBoundingClientRect().top - picker.getBoundingClientRect().top - (picker.clientHeight - active.offsetHeight) / 2
+  }
 }
 
 function placeEntryChildren(strip) {
@@ -433,7 +445,7 @@ function selectCategories(form, selectedId = '') {
   section.hidden = direction === 'transfer'
   if (section.hidden) return
   const pill = (item, active, disclosure = '') => `<button type="button" class="entry-cat" aria-pressed="${active}"${disclosure} data-action="entry-category" data-value="${escape(item.id)}">
-    ${categoryArt(item.icon)}<span>${escape(item.name)}</span></button>`
+    ${categoryArt(item.icon, 27, item.name)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
   strip.innerHTML = roots.map(item => pill(item, item.id === rootId, item.id ?
     ` aria-expanded="${item.id === rootId}" aria-controls="entry-subcategories"` : '')).join('') +
@@ -458,10 +470,10 @@ const categoryAdder = `<div class="category-adder" data-icon-holder hidden>
   <div class="icon-picker-slot"></div>
 </div>`
 
-// A child starts from its parent's icon, a new top-level category from the plain tag.
-const startingIcon = parent => parent ? iconAliases[parent.icon] ?? parent.icon : 'tag'
+// Use the stored icon (or the parent's icon for a new child) and resolve old names in the picker.
+const startingIcon = category => category ? iconAliases[category.icon] ?? category.icon : 'tag'
 const iconPicker = selected => `<div class="icon-picker" role="radiogroup" aria-label="选择图标">${iconChoices.map(name =>
-  `<button type="button" class="icon-choice" role="radio" aria-checked="${name === selected}" aria-label="${name}" data-action="pick-icon" data-value="${name}">${glyph(name, 22)}</button>`).join('')}</div>`
+  `<button type="button" class="icon-choice" role="radio" aria-checked="${name === selected}" aria-label="${name}" data-action="pick-icon" data-value="${name}">${categoryArt(name)}</button>`).join('')}</div>`
 const pickerDirection = picker => picker.dataset.direction ?? picker.closest('form').elements.direction.value
 
 function openCategoryAdder(picker, parentId) {
@@ -490,7 +502,7 @@ async function saveInlineCategory(picker) {
   const form = picker.closest('#entry-form')
   adder.dataset.saving = 'true'
   try {
-    const result = await addCategory(parent?.id ?? null, parent?.direction ?? pickerDirection(picker), adder.querySelector('input').value, adder.dataset.icon)
+    const result = await saveCategoryDraft(parent?.id ?? null, parent?.direction ?? pickerDirection(picker), adder.querySelector('input').value, adder.dataset.icon)
     if (result.error) { adder.querySelector('.category-adder-error').textContent = result.error; return }
     await reload()
     if (form && byId('entry-form') === form) selectCategories(form, result.id)
@@ -916,25 +928,28 @@ async function submitEntry(form, control) {
   await refreshRates()
 }
 
-async function addCategory(parentId, direction, value, chosenIcon) {
-  const name = value.normalize('NFKC').trim()
+async function saveCategoryDraft(parentId, direction, value, chosenIcon, previous) {
+  const name = value === previous?.name ? value : value.normalize('NFKC').trim()
   if (!name || name.length > 24) return { error: '请输入 1 到 24 个字符的名称。' }
-  const taken = { error: '同级分类中已有这个名称。' }
-  if (state.categories.some(item => item.parentId === parentId && item.direction === direction && item.name === name)) return taken
   const parent = state.categories.find(item => item.id === parentId)
-  const icon = iconNames.has(chosenIcon) ? chosenIcon : startingIcon(parent)
-  const category = { id: crypto.randomUUID(), parentId, direction, name, icon }
-  return await saveCategory(category) ? { id: category.id } : taken
+  const icon = iconNames.has(chosenIcon) ? chosenIcon : startingIcon(previous ?? parent)
+  const category = { id: previous?.id ?? crypto.randomUUID(), parentId, direction, name, icon }
+  const result = await saveCategory(category, { editing: Boolean(previous) })
+  if (result === 'duplicate') return { error: '同级分类中已有这个名称。' }
+  if (result === 'missing') return { error: '分类已不存在，请关闭后重试。' }
+  return { id: category.id }
 }
 
 async function submitCategory(form) {
-  const parent = state.categories.find(item => item.id === form.dataset.parent)
-  const direction = parent?.direction ?? form.elements.direction.value
-  const result = await addCategory(parent?.id ?? null, direction, form.elements.name.value, form.dataset.icon)
+  const previous = state.categories.find(item => item.id === form.dataset.id)
+  if (form.dataset.id && !previous) { formError('分类已不存在，请关闭后重试。'); return }
+  const direction = form.dataset.direction || form.elements.direction.value
+  const result = await saveCategoryDraft(form.dataset.parent || null, direction, form.elements.name.value, form.dataset.icon, previous)
   if (result.error) { formError(result.error); return }
   state.categoryDirection = direction
   dialog.close()
   await reload()
+  main.querySelector(`[data-action="category-edit"][data-value="${CSS.escape(result.id)}"]`)?.focus({ preventScroll: true })
   toast('分类已保存')
 }
 
@@ -1022,7 +1037,8 @@ const actions = {
     await reload()
     toast(`已删除 ${ids.length} 笔流水`)
   },
-  'category-new': ({ value }) => createCategory(value),
+  'category-new': ({ value }) => openCategoryForm({ parentId: value }),
+  'category-edit': ({ value }) => openCategoryForm({ categoryId: value }),
   'category-add': ({ value }, control) => openCategoryAdder(control.closest('.category-picker'), value),
   'pick-icon': ({ value }, control) => {
     const holder = control.closest('[data-icon-holder]')

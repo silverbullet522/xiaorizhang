@@ -25,6 +25,11 @@
   --bar-in: #4f9a74;
   --bar-out: #2f322e;
   --focus: #2b7a54;
+  --category-blue: #2865a7;
+  --category-red: #b53e52;
+  --category-orange: #a95619;
+  --category-green: #2b7957;
+  --category-purple: #7952a6;
   --nav-bg: rgb(249 249 246 / .84);
   --pop: 0 12px 40px rgb(20 22 19 / .14), 0 1px 3px rgb(20 22 19 / .06);
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
@@ -56,6 +61,11 @@
     --bar-in: #6dbb8e;
     --bar-out: #d6d5cf;
     --focus: #a9d670;
+    --category-blue: #83b7fa;
+    --category-red: #f68e9f;
+    --category-orange: #efab75;
+    --category-green: #90d2a9;
+    --category-purple: #c8a5f1;
     --nav-bg: rgb(24 27 24 / .82);
     --pop: 0 12px 40px rgb(0 0 0 / .5);
   }
@@ -187,7 +197,11 @@ a.button { text-decoration: none }
 .pick-mark svg { opacity: 0 }
 .transaction.picking[aria-pressed="true"] .pick-mark { background: var(--brand); box-shadow: none }
 .transaction.picking[aria-pressed="true"] .pick-mark svg { opacity: 1 }
-.category-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); flex: none }
+.category-icon { display: grid; place-items: center; width: 38px; height: 38px; color: var(--category-blue); flex: none }
+.category-icon[data-tone="red"] { color: var(--category-red) }
+.category-icon[data-tone="orange"] { color: var(--category-orange) }
+.category-icon[data-tone="green"] { color: var(--category-green) }
+.category-icon[data-tone="purple"] { color: var(--category-purple) }
 .txn-body { min-width: 0 }
 .txn-title { display: block; font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
 .txn-meta { display: block; margin-top: 1px; font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
@@ -255,11 +269,17 @@ a.button { text-decoration: none }
 
 /* Categories page */
 .groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px }
-.group-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px }
-.group-head .icon-button { margin-left: auto; background: var(--surface-2); min-width: 34px; min-height: 34px; border-radius: 50% }
-.group-head h2 { min-width: 0; overflow-wrap: anywhere }
-.chips { display: flex; flex-wrap: wrap; gap: 6px }
-.chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 99px; background: var(--surface-2); color: var(--ink-2); font-size: 13px; overflow-wrap: anywhere }
+.group-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px }
+.group-head .icon-button { background: var(--surface-2); min-width: 44px; min-height: 44px }
+.group-head h2 { flex: 1; min-width: 0 }
+.group-title, .chip {
+  display: flex; align-items: center; min-height: 44px; max-width: 100%; border: 0; border-radius: 8px;
+  background: transparent; text-align: left; overflow-wrap: anywhere;
+}
+.group-title { width: 100%; gap: 4px; padding: 2px 6px 2px 0; font-weight: inherit }
+.chips { display: flex; flex-wrap: wrap; gap: 2px 8px }
+.chip { gap: 6px; padding: 4px 8px; color: var(--ink-2); font-size: 13px }
+.chip .category-icon { width: 20px; height: 20px }
 
 /* Dialogs */
 dialog {
@@ -354,13 +374,14 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 .category-strip, .category-children { display: grid; grid-template-columns: repeat(auto-fill, minmax(68px, 1fr)); gap: 8px 2px; min-width: 0 }
 .category-strip { margin-inline: -4px }
 .entry-cat {
-  display: grid; justify-items: center; align-content: start; gap: 6px; min-width: 0; padding: 4px 2px;
+  display: grid; justify-items: center; align-content: center; gap: 4px; min-width: 0; min-height: 60px; padding: 4px 2px;
   border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 12.5px; line-height: 1.2;
 }
 .entry-cat > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-.entry-cat .category-icon { width: 50px; height: 50px }
+.entry-cat .category-icon { width: 36px; height: 32px }
+.entry-cat[aria-pressed="false"] .category-icon svg { opacity: .72 }
 .entry-cat[aria-pressed="true"] { color: var(--ink); font-weight: 600 }
-.entry-cat[aria-pressed="true"] .category-icon { background: var(--brand); color: var(--brand-ink) }
+.entry-cat[aria-pressed="true"] .category-icon svg { stroke-width: 2.6 }
 .category-strip > [aria-expanded="true"] { position: relative }
 .category-strip > [aria-expanded="true"]::after {
   content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); pointer-events: none;
@@ -368,16 +389,14 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 }
 .category-children { grid-column: 1 / -1; margin-inline: 4px; padding: 10px 4px 6px; border-radius: 14px; background: var(--surface-2) }
 .category-children .category-adder { grid-column: 1 / -1 }
-.category-children .category-icon { width: 44px; height: 44px; background: var(--surface) }
-.entry-add .category-icon { background: transparent; box-shadow: inset 0 0 0 1.5px var(--line-strong); color: var(--muted) }
-.category-children .entry-add .category-icon { background: transparent }
+.entry-add .category-icon { color: var(--muted) }
 .icon-picker-slot { flex-basis: 100% }
 .icon-picker {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 4px; max-height: 196px; overflow-y: auto;
   padding: 6px; border-radius: 12px; background: var(--surface-2); overscroll-behavior: contain;
 }
 .icon-choice { display: grid; place-items: center; height: 44px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--ink-2) }
-.icon-choice[aria-checked="true"] { background: var(--brand); color: var(--brand-ink) }
+.icon-choice[aria-checked="true"] { background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line-strong) }
 .category-adder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px }
 .category-adder .control { flex: 1; min-width: 0; min-height: 40px }
 .category-adder .button { min-height: 40px; padding-inline: 12px }
@@ -450,8 +469,8 @@ body.selecting #main { padding-bottom: 110px }
   .transaction:hover { background: var(--hover) }
   .chart-day:enabled:hover { background: var(--hover) }
   .stat-line:hover .stat-name span { text-decoration: underline; text-underline-offset: 3px }
-  .entry-cat:hover .category-icon, .icon-choice:not([aria-checked="true"]):hover { background: var(--surface-3) }
-  .entry-cat[aria-pressed="true"]:hover .category-icon { background: var(--brand-hover) }
+  .group-title:hover, .chip:hover, .entry-cat:hover { background: var(--hover) }
+  .icon-choice:not([aria-checked="true"]):hover { background: var(--surface-3) }
   .key:hover { filter: brightness(.97) }
 }
 
@@ -518,8 +537,6 @@ body.selecting #main { padding-bottom: 110px }
   .entry-sheet .dialog-top { padding: 12px 16px 4px }
   .entry-content { padding: 4px 16px 12px; gap: 8px }
   .entry-amount input { height: 52px; font-size: 42px }
-  .entry-cat .category-icon { width: 48px; height: 48px }
-  .category-children .category-icon { width: 42px; height: 42px }
   .entry-footer { padding: 8px 16px }
   .entry-keypad { grid-auto-rows: minmax(44px, auto); padding: 8px 10px 10px }
   #notice { bottom: calc(72px + env(safe-area-inset-bottom)) }
