@@ -10,7 +10,7 @@ import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { parseScreenText, screenTextLimit } from './screen.mjs'
 import {
-  brand, breakdown, button, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
+  brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
 } from './ui.mjs'
 
@@ -18,11 +18,11 @@ const byId = id => document.getElementById(id)
 const main = byId('main')
 const dialog = byId('dialog')
 const state = {
-  entries: [], categories: [], currency: 'JPY', view: 'overview', month: tokyoNow().slice(0, 7),
+  entries: [], categories: [], currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
   statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0
 }
-const viewNames = { overview: ['概览', 'overview'], ledger: ['流水', 'ledger'], categories: ['分类', 'tag'] }
+const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
 let importState
 let pendingBackup
@@ -52,7 +52,7 @@ const children = id => id ? state.categories.filter(item => item.parentId === id
 
 function navLink(view) {
   const [label, glyph] = viewNames[view]
-  const active = state.view === view ? 'aria-current="page"' : ''
+  const active = (state.view === view || (view === 'home' && state.view === 'ledger')) ? 'aria-current="page"' : ''
   return `<button class="nav-link" data-action="navigate" data-value="${view}" ${active} type="button">${icon(glyph, 19)}${label}</button>`
 }
 
@@ -64,10 +64,10 @@ function chrome() {
   byId('topbar').innerHTML = `<span class="top-label">${icon('shield', 16)}${status}</span>${brand('mobile-brand')}
     <div class="top-actions">${icoButton('screen-paste', 'scan', '粘贴屏幕账单')}
     ${icoButton('pick-import', 'upload', '导入账单')}
-    ${icoButton('backup', 'settings', '设置与备份')}
     <span class="desktop-add">${button('add', '记一笔', '', 'plus', 'primary')}</span></div>`
-  byId('mobile-nav').innerHTML = `${navLink('overview')}${navLink('ledger')}${navLink('categories')}
-    <button class="nav-link mobile-add" type="button" data-action="add">${icon('plus', 19)}记一笔</button>`
+  byId('mobile-nav').innerHTML = `${navLink('home')}${navLink('overview')}
+    <button class="mobile-add" type="button" data-action="add" aria-label="记一笔">${icon('plus', 26)}</button>
+    ${navLink('categories')}<button class="nav-link" type="button" data-action="backup" aria-label="设置与备份">${icon('settings', 20)}设置</button>`
 }
 
 const periodControls = () => `<div class="filter-actions">${periodDisplay(state.range, state.month)}${tabs('currency', { JPY: 'JPY', CNY: 'CNY' }, state.currency)}</div>`
@@ -75,12 +75,68 @@ const pendingBanner = count => count
   ? `<div class="banner"><span>当前金额为已换算小计，${count} 笔待换算。</span><button type="button" data-action="retry-rates" class="plain">刷新汇率</button></div>`
   : ''
 
+const weekday = new Intl.DateTimeFormat('zh-CN', { weekday: 'short', timeZone: 'UTC' })
+
+function dayCards(entries) {
+  const groups = new Map()
+  for (const entry of entries) {
+    const day = entry.at.slice(0, 10)
+    if (!groups.has(day)) groups.set(day, [])
+    groups.get(day).push(entry)
+  }
+  let remaining = state.ledgerLimit
+  const cards = []
+  for (const [day, group] of groups) {
+    if (remaining <= 0) break
+    const sums = summarize(group, state.currency)
+    const [, month, date] = day.split('-').map(Number)
+    const label = weekday.format(new Date(day + 'T00:00:00Z'))
+    cards.push(`<article class="day-card">
+      <header class="day-head">
+        <h3 aria-label="${dayLabel(day)}"><time datetime="${day}">${month}月${date}日</time><span>${label}</span></h3>
+        <p><span>支 ${money(sums.expense, state.currency)}</span><span>收 ${money(sums.income, state.currency)}</span>${sums.pending ? '<span>待换算</span>' : ''}</p>
+      </header>
+      <div class="day-rows">${group.slice(0, remaining).map(entry => transaction(entry, state.categories, state.currency, true)).join('')}</div>
+    </article>`)
+    remaining -= group.length
+  }
+  return entries.length ? cards.join('') : `<section class="day-card">${emptyLedger(Boolean(state.entries.length))}</section>`
+}
+
+function home() {
+  const active = period()
+  const today = tokyoNow().slice(0, 10)
+  const month = state.month === today.slice(0, 7) ? '本月' : `${Number(state.month.slice(5))}月`
+  const periodName = state.range ? '区间' : month
+  const entries = state.entries.filter(entry => within(entry, active))
+  const totals = summarize(entries, state.currency)
+  const daily = summarize(state.entries.filter(entry => entry.at.startsWith(today)), state.currency)
+  return `<div class="page-heading book-heading"><h1>账本</h1>${periodControls()}</div>
+    <div class="book-layout">
+      <div class="book-digest">
+        <section class="book-hero" aria-label="收支摘要">
+          <div class="book-spotlight"><div><h2>今日支出</h2><strong>${money(daily.expense, state.currency)}</strong>
+            ${daily.pending ? `<small>${daily.pending} 笔待换算</small>` : ''}</div><span class="book-emblem">${icon('wallet', 24)}</span></div>
+          <div class="book-month"><div><span>${periodName}支出</span><strong>${money(totals.expense, state.currency)}</strong></div>
+            <div><span>${periodName}收入</span><strong>${money(totals.income, state.currency)}</strong></div></div>
+          <div class="book-net"><span>${periodName}净收支</span><strong>${money(totals.net, state.currency)}</strong></div>
+        </section>
+        ${pendingBanner(totals.pending)}
+      </div>
+      <section class="book-activity">
+        <div class="activity-head"><h2>流水</h2><button class="plain" type="button" data-action="navigate" data-value="ledger">筛选</button></div>
+        <div class="day-stack">${dayCards(entries)}</div>
+        ${entries.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}
+      </section>
+    </div>`
+}
+
 function overview() {
   const range = period()
   const entries = state.entries.filter(entry => within(entry, range))
   const totals = summarize(entries, state.currency)
   const counts = { expense: entries.filter(entry => entry.direction === 'expense').length, income: entries.filter(entry => entry.direction === 'income').length }
-  return `<div class="page-heading"><div><h1>账本概览</h1></div>${periodControls()}</div>
+  return `<div class="page-heading"><div><h1>报表</h1></div>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
     <section class="panel"><div class="panel-head"><h2>近期流水</h2><button class="plain" type="button" data-action="navigate" data-value="ledger">查看全部</button></div>
@@ -94,22 +150,15 @@ function ledger() {
     (state.ledgerDirection === 'all' || entry.direction === state.ledgerDirection) &&
     (state.ledgerCategory === null || (state.ledgerCategory === '' ? !entry.categoryId
       : entry.categoryId === state.ledgerCategory || state.categories.some(item => item.id === entry.categoryId && item.parentId === state.ledgerCategory))))
-  let lastDay
-  const rows = filtered.slice(0, state.ledgerLimit).map(item => {
-    const day = item.at.slice(0, 10)
-    const heading = day !== lastDay ? `<h3 class="day-label">${dayLabel(day)}</h3>` : ''
-    lastDay = day
-    return heading + transaction(item, state.categories, state.currency)
-  }).join('')
   const restrictions = [state.ledgerDay && (range.start === range.end ? dayLabel(range.start) : `${range.start} ～ ${range.end}`),
     state.ledgerCategory !== null && (category?.name ?? '未分类')].filter(Boolean)
   return `<div class="page-heading"><div><h1>流水</h1><p>${filtered.length} 笔记录</p></div>${periodControls()}</div>
-    <section class="panel"><div class="ledger-filter">
+    <div class="ledger-filter">
     ${tabs('ledger-direction', { all: '全部', ...directions }, state.ledgerDirection)}
     ${button('pick-import', '导入账单', '', 'upload')}</div>
     ${restrictions.length ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除当前细分筛选">${escape(restrictions.join(' · '))} ×</button>` : ''}
-    <div class="ledger">${rows || emptyLedger(Boolean(state.entries.length))}</div>
-    ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}</section>`
+    <div class="day-stack">${dayCards(filtered)}</div>
+    ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}`
 }
 
 function categoryPage() {
@@ -127,7 +176,7 @@ function categoryPage() {
 
 function render() {
   chrome()
-  main.innerHTML = ({ overview, ledger, categories: categoryPage })[state.view]()
+  main.innerHTML = ({ home, overview, ledger, categories: categoryPage })[state.view]()
 }
 
 async function reload() {
@@ -149,8 +198,9 @@ function go(view) {
   window.scrollTo(0, 0)
 }
 
-function openDialog(title, content, wide = false) {
-  dialog.classList.toggle('wide', wide)
+function openDialog(title, content, layout = '') {
+  dialog.classList.toggle('wide', layout === 'wide')
+  dialog.classList.toggle('entry-sheet', layout === 'entry')
   dialog.innerHTML = `<div class="dialog-top"><h2 id="dialog-title">${title}</h2>
     ${icoButton('close', 'close', '关闭')}</div><div class="dialog-content">${content}</div>`
   if (!dialog.open) dialog.showModal()
@@ -190,13 +240,32 @@ function createCategory(parentId) {
     ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton('保存分类')}</div></form>`)
 }
 
-function selectCategories(form, direction, selectedId, rootId) {
-  const selected = state.categories.find(item => item.id === selectedId)
-  const first = rootId ?? selected?.parentId ?? selected?.id ?? ''
-  form.elements.parent.innerHTML = option('', '未分类', first) + topCategories(direction).map(item => option(item.id, item.name, first)).join('')
-  form.elements.child.innerHTML = option('', '选择二级分类（可选）', selectedId) + children(form.elements.parent.value).map(item => option(item.id, item.name, selectedId)).join('')
-  form.elements.parent.disabled = direction === 'transfer'
-  form.elements.child.disabled = direction === 'transfer' || !children(form.elements.parent.value).length
+function selectCategories(form, selectedId = '') {
+  const direction = form.elements.direction.value
+  const selected = state.categories.find(item => item.id === selectedId && item.direction === direction)
+  const rootId = selected?.parentId ?? selected?.id ?? ''
+  const section = form.querySelector('.entry-categories')
+  const strip = section.querySelector('.category-strip')
+  const childGrid = section.querySelector('.category-children')
+  form.elements.category.value = selected?.id ?? ''
+  section.hidden = direction === 'transfer'
+  if (section.hidden) return
+  const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="entry-category" data-value="${item.id}">
+    ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
+  const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
+  const oldScroll = strip.scrollLeft
+  strip.innerHTML = roots.map(item => pill(item, item.id === rootId)).join('')
+  strip.scrollLeft = oldScroll
+  if (selected) {
+    const active = strip.querySelector('[aria-pressed="true"]').getBoundingClientRect()
+    const bounds = strip.getBoundingClientRect()
+    if (active.right > bounds.right) strip.scrollLeft += active.right - bounds.right + 4
+    else if (active.left < bounds.left) strip.scrollLeft -= bounds.left - active.left + 4
+  }
+  const secondary = children(rootId)
+  childGrid.hidden = !secondary.length
+  childGrid.innerHTML = secondary.map(item => pill(item, item.id === selectedId)).join('')
+  section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
 }
 
 const amountText = (minor, currency) => (minor / (currency === 'JPY' ? 1 : 100)).toFixed(currency === 'JPY' ? 0 : 2)
@@ -216,27 +285,75 @@ function openEntry(id, screen) {
   const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
   const direction = entry?.direction ?? screen?.direction ?? 'expense'
   const choices = (screen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
-  openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" class="form-grid" data-id="${entry?.id ?? ''}">
+  const directionChoices = Object.entries(directions).map(([key, label]) => `<label class="entry-direction">
+    <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
+    <span>${label}</span></label>`).join('')
+  openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
+    <div class="entry-content">
     ${screen ? `<p class="screen-review">${icon('scan', 18)}<span>${screenReview[screen.status]}</span></p>` : ''}
-    <div class="form-pair">
-      ${selectField('收支类型', 'direction', Object.entries(directions).map(([key, value]) => option(key, value, direction)).join(''))}
-      ${field('币种', `<select name="currency" required>${choices}</select>`)}
+    <div class="entry-toolbar">
+      <fieldset class="entry-modes"><legend class="sr-only">收支类型</legend>${directionChoices}</fieldset>
+      <div class="entry-clock">
+        <label><span class="sr-only">日期 · 东京时间</span>
+          <input name="day" type="date" min="1900-01-01" max="9999-12-31" value="${at.slice(0, 10)}" required></label>
+        <label><span class="sr-only">时间</span><input name="time" type="time" step="1" value="${at.slice(11)}" required></label>
+      </div>
     </div>
-    ${field('金额', `<input name="amount" inputmode="${currency === 'JPY' ? 'numeric' : 'decimal'}" value="${escape(amount)}" autocomplete="off" maxlength="24" placeholder="0" required>`)}
+    <div class="entry-amount">
+      <span class="entry-symbol" aria-hidden="true">${currency === 'USD' ? '$' : currency ? '¥' : ''}</span>
+      <label class="entry-amount-input"><span class="sr-only">金额</span>
+        <input name="amount" inputmode="none" value="${escape(amount)}" autocomplete="off" maxlength="24" placeholder="0" required></label>
+      <label class="entry-currency"><span class="sr-only">币种</span><select class="control" name="currency" required>${choices}</select></label>
+    </div>
     <div class="fx" id="fx-preview" aria-live="polite"></div>
-    <div class="form-pair">
-      ${field('日期 · 东京时间', `<input name="day" type="date" min="1900-01-01" max="9999-12-31" value="${at.slice(0, 10)}" required>`)}
-      ${field('时间', `<input name="time" type="time" step="1" value="${at.slice(11)}" required>`)}
+    <section class="entry-categories" aria-label="选择分类">
+      <input type="hidden" name="category">
+      <div class="entry-category-heading"><h3>分类</h3><span class="entry-category-name"></span></div>
+      <div class="category-strip" aria-label="一级分类"></div>
+      <div class="category-children" aria-label="二级分类"></div>
+    </section></div>
+    <div class="entry-footer">
+    <div class="entry-note">
+      <label><span class="sr-only">备注</span><textarea name="note" maxlength="500" rows="1" placeholder="填写备注">${escape(entry?.note ?? screen?.note ?? '')}</textarea></label>
+      ${entry ? icoButton('delete-entry', 'trash', '删除流水', `data-value="${entry.id}"`) : ''}
     </div>
-    <div class="form-pair">
-      ${selectField('一级分类', 'parent', '')}${selectField('二级分类', 'child', '')}
-    </div>
-    ${field('备注', `<textarea name="note" maxlength="500" placeholder="商户或其他备注">${escape(entry?.note ?? screen?.note ?? '')}</textarea>`)}
-    ${errorPlaceholder}<div class="form-footer">${entry ? button('delete-entry', '删除', `data-value="${entry.id}"`, '', 'danger leading') : ''}
-    ${cancelButton}${submitButton('保存流水')}</div></form>`)
+    ${errorPlaceholder}</div>
+    ${keypad(entry || screen)}</form>`, 'entry')
   const form = byId('entry-form')
-  selectCategories(form, direction, entry?.categoryId)
+  selectCategories(form, entry?.categoryId)
+  updateEntryCurrency(form)
   refreshEntryQuote(form, true)
+}
+
+function keypad(single) {
+  const key = (value, glyph = '', label = '') => `<button class="key" type="button" data-action="entry-key" data-value="${value}"${label ? ` aria-label="${label}"` : ''}>${glyph ? icon(glyph, 20) : value}</button>`
+  return `<div class="entry-keypad" aria-label="数字键盘">
+    ${['7', '8', '9'].map(value => key(value)).join('')}${key('erase', 'erase', '删除一位')}
+    ${['4', '5', '6'].map(value => key(value)).join('')}<button class="key key-clear" type="button" data-action="entry-key" data-value="clear">清空</button>
+    ${['1', '2', '3'].map(value => key(value)).join('')}
+    <button type="submit" class="key key-save" aria-label="保存流水">保存</button>
+    ${single ? '<span></span>' : '<button class="key key-repeat" type="submit" value="repeat">再记一笔</button>'}
+    ${key('0')}${key('.', '', '小数点')}
+  </div>`
+}
+
+function updateEntryCurrency(form) {
+  const code = form.elements.currency.value
+  form.querySelector('.entry-symbol').textContent = code === 'USD' ? '$' : code ? '¥' : ''
+  form.querySelector('[data-value="."]').disabled = code === 'JPY'
+}
+
+function pressEntryKey(form, value) {
+  const input = form.elements.amount
+  if (value === 'erase') input.value = input.value.slice(0, -1)
+  else if (value === 'clear') input.value = ''
+  else if (value === '.') {
+    if (!input.value.includes('.')) input.value = (input.value || '0') + '.'
+  } else if (input.value.length < input.maxLength && (input.value.split('.')[1]?.length ?? 0) < 2) {
+    input.value = (input.value === '0' ? '' : input.value) + value
+  }
+  formError('')
+  refreshEntryQuote(form, false)
 }
 
 function entryDraft(form) {
@@ -251,7 +368,7 @@ function entryDraft(form) {
   const preserve = sameAmount && sameDay
   return withQuotes({
     at, currency, minor, direction: data.direction.value,
-    categoryId: data.direction.value === 'transfer' ? null : data.child.value || data.parent.value || null,
+    categoryId: data.direction.value === 'transfer' ? null : data.category.value || null,
     note: data.note.value.trim(),
     settlementYen: sameAmount ? previous.settlementYen : null,
     sourceRate: sameAmount ? previous.sourceRate : null,
@@ -310,8 +427,14 @@ async function readScreenClipboard() {
 
 function quotePreview(form) {
   const text = byId('fx-preview')
+  text.hidden = !form.elements.amount.value.trim()
+  if (text.hidden) return
   const draft = entryDraft(form)
   const selected = form.elements.currency.value
+  if (!selected) {
+    text.textContent = '选择币种后查看换算'
+    return
+  }
   const available = quotesFor(form.elements.day.value)
   const rateLabel = draft?.fx.CNY ?? available.CNY
   if (!draft) {
@@ -424,7 +547,7 @@ function openImport() {
     ${items.length ? selectField('工作表', 'sheet', items.map(name => option(name, name, importState.sheet)).join('')).replace('name="sheet"', 'id="sheet" name="sheet"') : ''}
     ${errorPlaceholder}
     ${importState.table && !statement ? importMapping() : ''}
-    ${importPreview()}</div>`, true)
+    ${importPreview()}</div>`, 'wide')
   if (importState.error) formError(importState.error)
 }
 
@@ -493,20 +616,22 @@ async function confirmImport(control) {
   } finally { control.disabled = false }
 }
 
-async function submitEntry(form) {
+async function submitEntry(form, control) {
   const entry = entryDraft(form)
   if (!entry) { formError('请输入有效日期和正数金额（日元为整数，人民币和美元最多两位小数）。'); return }
   const previous = state.entries.find(item => item.id === form.dataset.id)
   const id = previous?.id ?? crypto.randomUUID()
   const createdAt = previous?.createdAt ?? new Date().toISOString()
+  const repeat = !previous && control?.value === 'repeat'
   await saveEntry({ ...entry, id, createdAt })
-  dialog.close()
+  if (!repeat) dialog.close()
   if (!previous && !within(entry, period())) {
     state.month = entry.at.slice(0, 7)
     state.range = null
     clearDrill()
   }
   await reload()
+  if (repeat && dialog.open && byId('entry-form') === form) openEntry()
   toast(previous ? '流水已更新' : '流水已保存')
   await refreshRates()
 }
@@ -559,6 +684,13 @@ const actions = {
   },
   add: () => openEntry(),
   edit: ({ value }) => openEntry(value),
+  'entry-key': ({ value }) => pressEntryKey(byId('entry-form'), value),
+  'entry-category': ({ value }, control) => {
+    const form = byId('entry-form')
+    const group = control.parentElement
+    selectCategories(form, value)
+    Array.from(group.children).find(item => item.dataset.value === value)?.focus({ preventScroll: true })
+  },
   'screen-paste': () => { showScreenInput(); return readScreenClipboard() },
   'screen-input': showScreenInput,
   'screen-read': readScreenClipboard,
@@ -627,7 +759,7 @@ const actions = {
       clearDrill()
       if (state.entries.length) state.month = state.entries[0].at.slice(0, 7)
       state.range = null
-      go('overview')
+      go('home')
       toast('备份已恢复')
       await refreshRates()
     } finally { control.disabled = false }
@@ -660,7 +792,7 @@ dialog.addEventListener('submit', async event => {
   if (control) control.disabled = true
   try {
     formError('')
-    await forms[form.id]?.(form)
+    await forms[form.id]?.(form, control)
   } catch (error) { handleError(error) }
   finally {
     delete form.dataset.saving
@@ -682,10 +814,8 @@ dialog.addEventListener('change', event => {
     return
   }
   if (form?.id !== 'entry-form') return
-  const direction = form.elements.direction.value
-  if (control.name === 'direction') selectCategories(form, direction)
-  if (control.name === 'parent') selectCategories(form, direction, null, control.value)
-  if (control.name === 'currency') form.elements.amount.inputMode = control.value === 'JPY' ? 'numeric' : 'decimal'
+  if (control.name === 'direction') selectCategories(form)
+  if (control.name === 'currency') updateEntryCurrency(form)
   if (['currency', 'day', 'time'].includes(control.name)) refreshEntryQuote(form, control.name !== 'time')
 })
 
