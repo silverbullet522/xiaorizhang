@@ -1,13 +1,14 @@
 import {
   amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, planBackupRestore, statementColumns,
-  summarize, tokyoNow, withQuotes, within
+  restorePlanSignature, summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
   addEntries, backupDocument, clearLedger, completeRates, deleteCategory, deleteEntries, deleteEntriesInRange, deleteEntry, readLedger, restoreLedger,
-  saveCategory, saveCurrency, saveEntries, saveEntry, validateBackup
+  deleteFeature, postBill, saveCategory, saveCurrency, saveEntries, saveEntry, saveFeature, validateBackup
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
+import { billCycles, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, monthlyComparison } from './features.mjs'
 import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
@@ -20,7 +21,7 @@ const byId = id => document.getElementById(id)
 const main = byId('main')
 const dialog = byId('dialog')
 const state = {
-  entries: [], categories: [], currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
+  entries: [], categories: [], features: emptyFeatures(), currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
   statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0,
   selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false, ledgerSearchOpen: false, ledgerCategoriesOpen: false
@@ -146,6 +147,7 @@ function home() {
           </dl>
         </section>
         ${pendingBanner(totals.pending)}
+        ${billsPanel()}${budgetPanel()}
       </div>
       <section class="book-activity" aria-labelledby="ledger-title">
         <div class="activity-head"><h2 id="ledger-title" tabindex="-1">${t('流水')}</h2>
@@ -164,6 +166,7 @@ function overview() {
   const counts = { expense: entries.filter(entry => entry.direction === 'expense').length, income: entries.filter(entry => entry.direction === 'income').length }
   return `<div class="page-heading"><div><h1>${t('报表')}</h1></div>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
+    ${comparisonPanel()}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
     <section class="panel"><div class="panel-head"><h2>${t('近期流水')}</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">${t('查看全部')}</button></div>
     <div class="ledger">${entries.length ? entries.slice(0, 5).map(item => transaction(item, state.categories, state.currency)).join('') : emptyLedger(Boolean(state.entries.length))}</div></section>`
@@ -632,19 +635,24 @@ const directionsFor = current => Object.keys(directions).filter(key => key !== '
   .map(key => [key, directionLabel(key)])
 const dayText = day => !dateTime(day) ? t('选择日期') : day === tokyoNow().slice(0, 10) ? t('今天') : formatDate(day)
 
-function openEntry(id, screen) {
+function openEntry(id, screen, scheduled) {
+  const bill = scheduled?.bill
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
   hidePaste()
-  const at = entry?.at ?? screen?.at ?? tokyoNow()
-  const currency = entry?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
-  const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
+  const now = tokyoNow()
+  const at = entry?.at ?? screen?.at ?? (scheduled ? scheduled.due + now.slice(10) : now)
+  const currency = entry?.currency ?? bill?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
+  const original = entry ?? bill
+  const amount = original ? amountText(original.minor, currency) : screen?.amount ?? ''
   const direction = entry?.direction ?? screen?.direction ?? 'expense'
   const choices = (screen ? option('', t('请选择币种'), currency) : '') + currencyOptions(currency)
-  const directionChoices = directionsFor(direction).map(([key, label]) => `<label class="entry-direction">
+  const directionChoices = directionsFor(direction).filter(([key]) => !bill || key === 'expense').map(([key, label]) => `<label class="entry-direction">
     <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
     <span>${label}</span></label>`).join('')
-  openDialog(entry ? t('编辑流水') : screen ? t('核对屏幕账单') : t('记一笔'), `<form id="entry-form" data-id="${entry?.id ?? ''}">
+  const title = bill ? t('确认固定账单') : entry ? t('编辑流水') : screen ? t('核对屏幕账单') : t('记一笔')
+  openDialog(title, `<form id="entry-form" data-id="${entry?.id ?? ''}" data-bill="${escape(bill?.id)}"
+    data-due="${scheduled?.due ?? ''}" data-merchant="${escape(screen?.merchant)}">
     <div class="entry-content">
     ${screen ? screenNotice(screen) : ''}
     <div class="entry-toolbar">
@@ -673,13 +681,14 @@ function openEntry(id, screen) {
     </section></div>
     <div class="entry-footer">
     <div class="entry-note">
-      <label><span class="sr-only">${t('备注')}</span><textarea name="note" maxlength="500" rows="1" placeholder="${t('填写备注')}">${escape(entry?.note ?? screen?.note ?? '')}</textarea></label>
+      <label><span class="sr-only">${t('备注')}</span><textarea name="note" maxlength="500" rows="1" placeholder="${t('填写备注')}">${escape(entry?.note ?? screen?.note ?? bill?.name ?? '')}</textarea></label>
       ${entry ? icoButton('delete-entry', 'trash', t('删除流水'), `data-value="${entry.id}"`) : ''}
     </div>
+    ${bill ? '' : `<label class="switch-line"><input type="checkbox" name="rememberMerchant">${t('记住此商户的分类')}</label>`}
     ${errorPlaceholder}</div>
-    ${keypad(entry || screen)}</form>`, 'entry')
+    ${keypad(entry || screen || bill)}</form>`, 'entry')
   const form = byId('entry-form')
-  selectCategories(form, entry?.categoryId ?? screen?.categoryId)
+  selectCategories(form, entry?.categoryId ?? screen?.categoryId ?? bill?.categoryId)
   updateEntryCurrency(form)
   refreshEntryQuote(form, true)
 }
@@ -770,7 +779,9 @@ function applyScreenText(text) {
     return
   }
   const draft = parseScreenText(text)
-  openEntry(null, { ...draft, categoryId: suggestCategory(draft, text, state.entries, state.categories) })
+  const match = findMerchantRule(state.features.merchants, draft.note, state.categories, draft.direction)
+  const categoryId = match.categoryId ?? suggestCategory(draft, text, state.entries, state.categories)
+  openEntry(null, { ...draft, note: match.note, merchant: draft.note, categoryId })
 }
 
 // Read the clipboard inside the tap itself; only show the manual paste form when that fails.
@@ -856,6 +867,150 @@ async function refreshRates(showStatus = false) {
   if (showStatus) toast(updated ? t('已补齐 {0} 笔汇率', updated) : t('暂未获取到可补齐的参考汇率'))
 }
 
+const featureTitles = { merchants: '商户规则', budgets: '分类预算', bills: '固定账单' }
+const cycleLabels = { weekly: '每周', monthly: '每月', yearly: '每年' }
+const todayTokyo = () => tokyoNow().slice(0, 10)
+
+function comparisonPanel() {
+  const stats = monthlyComparison(state.entries, state.categories, todayTokyo(), state.currency)
+  const [current, previous] = stats.totals
+  const amount = value => money(value, state.currency)
+  const signed = value => (value > 0 ? '+' : '') + amount(value)
+  const rangeLabel = ({ start, end }) => start === end ? dayLabel(start) : t('{0} 至 {1}', formatDate(start, 'short'), formatDate(end, 'short'))
+  const rows = stats.growth.slice(0, 5).map(item => `<button class="feature-row" type="button" data-action="compare-drill"
+    data-value="${escape(item.id)}" data-start="${stats.current.start}" data-end="${stats.current.end}">
+    <span><strong>${escape(importCategoryLabel(item.id))}</strong><small>${amount(item.previous)} → ${amount(item.current)}</small></span>
+    <strong>${signed(item.delta)}</strong>${icon('right', 15)}</button>`).join('')
+  return `<section class="panel feature-panel"><div class="panel-head"><h2>${t('月度对比')}</h2></div>
+    <dl class="feature-metrics"><div><dt>${t('本月至今')} · ${rangeLabel(stats.current)}</dt><dd>${amount(current)}</dd></div>
+    <div><dt>${t('上月同期')} · ${rangeLabel(stats.previous)}</dt><dd>${amount(previous)}</dd></div>
+    <div><dt>${t('支出差额')}</dt><dd>${signed(current - previous)}</dd></div></dl>
+    ${stats.pending ? `<p class="fine">${t('{0} 笔待换算', stats.pending)}</p>` : ''}
+    <h3>${t('支出增长最多的分类')}</h3>
+    ${rows || `<p class="fine">${t('暂无支出增长的分类。')}</p>`}
+  </section>`
+}
+
+function budgetPanel() {
+  if (!state.features.budgets.length) return ''
+  const budgets = budgetUsage(state.entries, state.categories, state.features.budgets, state.month)
+  return `<section class="panel feature-panel"><div class="panel-head"><div><h2>${t('分类预算')}</h2>
+    <p>${formatDate(state.month, 'month')}</p></div>${button('manage-feature', t('管理'), 'data-value="budgets"', '', 'subtle')}</div>
+    <ul class="feature-list">${budgets.map(budget => {
+      const amount = value => money(value, budget.currency)
+      const label = importCategoryLabel(budget.categoryId)
+      return `<li><div class="feature-amount"><strong>${escape(label)}</strong><span>${amount(budget.minor)} ${budget.currency}</span></div>
+        <progress aria-label="${escape(label)}" max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
+        <small>${t('已用 {0}', amount(budget.spent))} · ${budget.remaining < 0
+          ? t('超出 {0}', amount(-budget.remaining)) : t('剩余 {0}', amount(budget.remaining))}
+          ${budget.pending ? ` · ${t('{0} 笔待换算', budget.pending)}` : ''}</small></li>`
+    }).join('')}</ul></section>`
+}
+
+function dueBills() {
+  const keys = new Set(state.entries.map(entry => entry.sourceKey).filter(key => key?.startsWith('recurring:')))
+  const today = todayTokyo()
+  return state.features.bills.map(bill => ({ bill, due: firstUnpostedDate(bill, keys) }))
+    .filter(item => item.due && item.due <= today).sort((a, b) => a.due.localeCompare(b.due))
+}
+
+function billsPanel() {
+  const due = dueBills()
+  if (!due.length) return ''
+  return `<section class="panel feature-panel"><div class="panel-head"><h2>${t('待确认的固定账单')}</h2>
+    ${button('manage-feature', t('管理'), 'data-value="bills"', '', 'subtle')}</div>
+    ${due.map(({ bill, due }) => `<div class="feature-row"><span><strong>${escape(bill.name)}</strong>
+      <small>${dayLabel(due)} · ${money(bill.minor, bill.currency)} ${bill.currency}</small></span>
+      ${button('review-bill', t('确认入账'), `data-value="${escape(bill.id)}" data-due="${due}"`, '', 'subtle')}</div>`).join('')}
+  </section>`
+}
+
+function manageFeature(list) {
+  if (!Object.hasOwn(featureTitles, list)) return
+  const rows = state.features[list].map(item => {
+    const category = item.categoryId ? importCategoryLabel(item.categoryId) : ''
+    const title = list === 'budgets' ? category : item.name || item.aliases[0]
+    const sub = list === 'merchants' ? [...item.aliases, category].filter(Boolean).join(' · ')
+      : [money(item.minor, item.currency) + ' ' + item.currency,
+        list === 'bills' ? [t(cycleLabels[item.cycle]), item.next ? t('下次日期 {0}', dayLabel(item.next)) : '', category].filter(Boolean).join(' · ') : ''].filter(Boolean).join(' · ')
+    return `<button type="button" class="feature-row" data-action="edit-feature" data-list="${list}" data-value="${escape(item.id)}">
+      <span><strong>${escape(title)}</strong><small>${escape(sub)}</small></span>${icon('right', 15)}</button>`
+  }).join('')
+  openDialog(t(featureTitles[list]), `<div class="form-grid">${rows ? `<div>${rows}</div>` : `<p class="fine">${t('还没有设置任何项目。')}</p>`}
+    <div class="form-footer">${button('edit-feature', t('添加'), `data-list="${list}"`, 'plus', 'primary')}</div></div>`)
+}
+
+function featureCategoryOptions(selected, expenseOnly, required) {
+  const groups = (expenseOnly ? ['expense'] : ['expense', 'income']).map(direction => {
+    const items = topCategories(direction).flatMap(root => [root, ...children(root.id)])
+    return `<optgroup label="${directionLabel(direction)}">${items.map(item =>
+      option(item.id, importCategoryLabel(item.id), selected)).join('')}</optgroup>`
+  }).join('')
+  return option('', t(required ? '选择分类' : '未分类'), selected) + groups
+}
+
+function featureForm(list, id) {
+  if (!Object.hasOwn(featureTitles, list)) return
+  const item = state.features[list].find(rule => rule.id === id)
+  if (id && !item) return
+  const merchant = list === 'merchants'
+  const bill = list === 'bills'
+  const currency = item?.currency ?? state.currency
+  const category = field(t('分类'), `<select name="category" ${list === 'budgets' ? 'required' : ''}>
+    ${featureCategoryOptions(item?.categoryId ?? '', !merchant, list === 'budgets')}</select>`)
+  const currencies = bill ? currencyOptions(currency) : ['JPY', 'CNY'].map(code => option(code, code, currency)).join('')
+  const nameField = field(t(merchant ? '商户显示名称（选填）' : '账单名称'),
+    `<input name="name" maxlength="120" value="${escape(item?.name ?? '')}" ${bill ? 'required' : ''}>`)
+  const amountFields = `<div class="form-pair">${selectField(t('币种'), 'currency', currencies)}
+    ${field(t(list === 'budgets' ? '每月预算金额' : '金额'), `<input name="amount" inputmode="decimal" maxlength="24" value="${item ? amountText(item.minor, currency) : ''}" required>`)}</div>`
+  openDialog(t(featureTitles[list]), `<form id="feature-form" class="form-grid" data-list="${list}" data-id="${escape(id ?? '')}">
+    ${merchant || bill ? nameField : ''}
+    ${merchant ? field(t('商户别名（每行一个）'), `<textarea name="aliases" maxlength="12000" required>${escape(item?.aliases.join('\n') ?? '')}</textarea>`) : amountFields}
+    ${bill ? `<div class="form-pair">${selectField(t('周期'), 'cycle', billCycles.map(cycle => option(cycle, t(cycleLabels[cycle]), item?.cycle ?? 'monthly')).join(''))}
+      ${field(t('首次扣款日'), `<input name="start" type="date" min="1900-01-01" max="9999-12-31" value="${item?.start ?? todayTokyo()}" required>`)}</div>` : ''}
+    ${category}
+    ${errorPlaceholder}<div class="form-footer">
+      ${item ? button('remove-feature', t('删除'), '', 'trash', 'danger leading') : ''}
+      ${button('manage-feature', t('返回'), `data-value="${list}"`)}${submitButton(t('保存'))}</div></form>`)
+}
+
+async function submitFeature(form) {
+  const { list, id } = form.dataset
+  const data = form.elements
+  const previous = state.features[list].find(item => item.id === id)
+  if (id && !previous) { formError(t('设置已变化，请返回后重试。')); return }
+  const item = { id: id || crypto.randomUUID(), categoryId: data.category.value || null }
+  if (list === 'merchants') {
+    item.name = data.name.value.trim()
+    item.aliases = data.aliases.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean)
+  } else {
+    item.currency = data.currency.value
+    item.minor = amountMinor(data.amount.value, item.currency)
+    if (list === 'bills') {
+      item.name = data.name.value.trim()
+      item.start = data.start.value
+      item.cycle = data.cycle.value
+      item.next = item.start === previous?.start && item.cycle === previous?.cycle ? previous.next : item.start
+    }
+  }
+  const result = await saveFeature(list, item, previous)
+  if (result !== 'saved') {
+    formError(t(result === 'duplicate' ? '已有相同的商户或分类预算。'
+      : result === 'changed' ? '设置已变化，请返回后重试。' : '请检查填写的名称、分类、金额和日期。'))
+    return
+  }
+  await reload()
+  manageFeature(list)
+}
+
+async function removeFeature(form) {
+  const { list, id } = form.dataset
+  if (!id || !confirm(t('删除这项设置？'))) return
+  await deleteFeature(list, id)
+  await reload()
+  manageFeature(list)
+}
+
 function settingsPage() {
   const row = (action, glyph, label) => `<button class="settings-row" type="button" data-action="${action}">
     ${icon(glyph, 19)}<span>${label}</span>${icon('right', 15)}</button>`
@@ -867,10 +1022,14 @@ function settingsPage() {
       </section>
       <section class="panel settings-panel"><h2>${t('数据与备份')}</h2>
         <p class="fine">${t('账本保存在当前设备。完整备份包含流水、分类和汇总币种。')}</p>
-        <div class="settings-rows">${row('export-backup', 'download', t('导出完整备份'))}${row('export-backup-range', 'calendar', t('按日期导出'))}${row('pick-backup', 'upload', t('恢复备份'))}</div>
+        <div class="settings-rows">${row('export-backup', 'download', t('导出完整备份'))}${row('export-backup-range', 'calendar', t('按日期导出'))}${row('export-csv', 'download', t('按日期导出 CSV'))}${row('pick-backup', 'upload', t('恢复备份'))}</div>
       </section>
       <section class="panel settings-panel"><h2>${t('数据管理')}</h2>
         <div class="settings-rows">${row('delete-entry-range', 'calendar', t('按日期删除流水'))}${row('clear-ledger', 'trash', t('清除所有数据'))}</div>
+      </section>
+      <section class="panel settings-panel"><h2>${t('记账设置')}</h2>
+        <div class="settings-rows">${Object.entries(featureTitles).map(([list, title]) => `<button class="settings-row" type="button" data-action="manage-feature" data-value="${list}">
+          ${icon(({ merchants: 'tag', budgets: 'chart', bills: 'calendar' })[list], 19)}<span>${t(title)}</span>${icon('right', 15)}</button>`).join('')}</div>
       </section>
       <section class="panel settings-panel"><h2>${t('屏幕记账')}</h2>
         <div class="settings-rows">${row('screen-guide', 'scan', t('配置屏幕记账'))}</div>
@@ -885,9 +1044,14 @@ function settingsPage() {
 async function exportBackup(range) {
   const entries = range ? state.entries.filter(entry => within(entry, range)) : state.entries
   const date = range ? t('{0}至{1}', range.start, range.end) : tokyoNow().slice(0, 10)
-  const file = new File([JSON.stringify(backupDocument({ ...state, entries }))], t('小日账-{0}.json', date), { type: 'application/json' })
+  const file = new File([JSON.stringify(backupDocument({ ...state, entries, features: range ? null : state.features }))],
+    t('小日账-{0}.json', date), { type: 'application/json' })
+  return shareOrDownload(file, t('小日账备份'), t('备份文件已生成'))
+}
+
+async function shareOrDownload(file, title, message) {
   if (navigator.canShare?.({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: t('小日账备份') }); return true }
+    try { await navigator.share({ files: [file], title }); return true }
     catch (error) { if (error.name === 'AbortError') return false }
   }
   const url = URL.createObjectURL(file)
@@ -899,8 +1063,16 @@ async function exportBackup(range) {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60000)
-  toast(t('备份文件已生成'))
+  toast(message)
   return true
+}
+
+async function exportCsv(range) {
+  const entries = state.entries.filter(entry => within(entry, range))
+  const headers = ['日期', '收支类型', '币种', '原币金额', '分类', '备注', '折算日元', '折算人民币'].map(label => t(label))
+  const csv = ledgerCsv(entries, headers, importCategoryLabel, directionLabel)
+  const file = new File([csv], `ledger-${range.start}_${range.end}.csv`, { type: 'text/csv;charset=utf-8' })
+  return shareOrDownload(file, t('流水 CSV'), t('CSV 文件已生成'))
 }
 
 function openDataRange(operation) {
@@ -914,12 +1086,13 @@ function openDataRange(operation) {
     return option(month, prefix + formatDate(month, 'month'))
   }).join('')
   const deleting = operation === 'delete'
-  openDialog(deleting ? t('按日期删除流水') : t('按日期导出'), `<form id="data-range-form" class="form-grid" data-operation="${operation}">
+  const csv = operation === 'csv'
+  openDialog(t(deleting ? '按日期删除流水' : csv ? '按日期导出 CSV' : '按日期导出'), `<form id="data-range-form" class="form-grid" data-operation="${operation}">
     ${selectField(t('快捷选择月份'), 'month', option('', t('选择整月')) + choices)}
     ${dateRangeFields(range)}
-    <p class="fine">${t('按东京日期计算，包含起止两天。{0}', deleting ? '' : t('备份包含所选流水与分类。恢复时按备份中有流水的日期替换。'))}</p>
+    <p class="fine">${t('按东京日期计算，包含起止两天。{0}', deleting || csv ? '' : t('备份包含所选流水与分类。恢复时按备份中有流水的日期替换。'))}</p>
     <p id="data-range-count" class="fine" aria-live="polite"></p>
-    ${errorPlaceholder}<div class="form-footer">${cancelButton()}${submitButton(deleting ? t('下一步') : t('导出备份'))}</div>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton()}${submitButton(t(deleting ? '下一步' : csv ? '导出 CSV' : '导出备份'))}</div>
   </form>`)
   updateDataRange(byId('data-range-form'))
 }
@@ -935,8 +1108,9 @@ function updateDataRange(form) {
 async function submitDataRange(form) {
   const range = dateRangeFromForm(form)
   if (!range) { formError(t(invalidDateRange)); return }
-  if (form.dataset.operation === 'export') {
-    if (await exportBackup(range) && byId('data-range-form') === form && dialog.open) dialog.close()
+  if (form.dataset.operation !== 'delete') {
+    const exported = await (form.dataset.operation === 'csv' ? exportCsv(range) : exportBackup(range))
+    if (exported && byId('data-range-form') === form && dialog.open) dialog.close()
     return
   }
   const ids = state.entries.filter(entry => within(entry, range)).map(entry => entry.id)
@@ -1002,8 +1176,10 @@ function prepareImportPreview(options) {
 
 function importEntryDraft(number, entry) {
   const direction = importState.overrides.get(number) ?? entry.direction
-  const draft = { ...entry, direction, categoryId: direction === entry.direction ? entry.categoryId : null }
-  if (direction !== 'transfer' && !draft.categoryId) draft.categoryId = importState.suggestCategory(draft, draft.note)
+  const match = findMerchantRule(state.features.merchants, entry.note, state.categories, direction)
+  const draft = { ...entry, note: match.note, direction,
+    categoryId: (direction === entry.direction ? entry.categoryId : null) ?? match.categoryId }
+  if (direction !== 'transfer' && !draft.categoryId) draft.categoryId = importState.suggestCategory(draft, draft.note) ?? importState.suggestCategory(draft, entry.note)
   return draft
 }
 
@@ -1012,6 +1188,15 @@ function importCategoryLabel(id) {
   if (!category) return t('未分类')
   const parent = state.categories.find(item => item.id === category.parentId)
   return parent ? `${categoryName(parent)} / ${categoryName(category)}` : categoryName(category)
+}
+
+function importMatchDetails(match) {
+  const { entry, number } = match
+  return `<details class="import-match"><summary class="chip">${t('重复')}</summary>
+    <small>${t(number == null ? '匹配账本中的流水' : '匹配文件中的第 {0} 行', number)}</small>
+    <small>${escape(entry.note || directionLabel(entry.direction))}</small>
+    <small>${escape(entry.at.replace('T', ' '))} · ${directionLabel(entry.direction)} · ${money(entry.minor, entry.currency)} ${entry.currency}</small>
+  </details>`
 }
 
 function importPreview() {
@@ -1025,13 +1210,13 @@ function importPreview() {
     <span class="chip">${t('待导入 {0}', counts.ready)}</span><span class="chip">${t('重复 {0}', counts.duplicate)}</span><span class="chip">${t('有问题 {0}', counts.invalid)}</span>
     ${ignored ? `<span class="chip">${t('已忽略 {0} 条积分记录', ignored)}</span>` : ''}</div>
     ${rows.length ? confirm : ''}</div>
-    <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, error }) => {
+    <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, match, error }) => {
       if (!entry) return `<div class="import-row"><span>${t('第 {0} 行', number)}</span><span class="form-error">${escape(t(error))}</span></div>`
-      const { direction, categoryId } = duplicate ? entry : importEntryDraft(number, entry)
+      const { direction, categoryId, note } = duplicate ? entry : importEntryDraft(number, entry)
       const meta = t('第 {0} 行 · {1} · {2} {3}', number, entry.at.replace('T', ' '), money(entry.minor, entry.currency), entry.currency)
-      return `<div class="import-row"><div><strong>${escape(entry.note || directionLabel(direction))}</strong><small>${meta}</small>
+      return `<div class="import-row"><div><strong>${escape(note || directionLabel(direction))}</strong><small>${meta}</small>
         ${duplicate ? '' : `<small class="import-category"${direction === 'transfer' ? ' hidden' : ''}>${escape(importCategoryLabel(categoryId))}</small>`}</div>
-        ${duplicate ? `<span class="chip">${t('重复')}</span>` : `<select class="control" aria-label="${t('第 {0} 行收支类型', number)}" data-import-row="${number}">
+        ${duplicate ? importMatchDetails(match) : `<select class="control" aria-label="${t('第 {0} 行收支类型', number)}" data-import-row="${number}">
         ${directionsFor(direction).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
     }).join('')}</div>
     ${!rows.length ? `<p class="fine">${ignored ? t('这张表只有已忽略的积分记录。') : t('这张表只有表头。')}</p>` : ''}
@@ -1124,7 +1309,25 @@ async function submitEntry(form, control) {
   const id = previous?.id ?? crypto.randomUUID()
   const createdAt = previous?.createdAt ?? new Date().toISOString()
   const repeat = !previous && control?.value === 'repeat'
-  await saveEntry({ ...entry, id, createdAt })
+  const record = { ...entry, id, createdAt }
+  if (form.dataset.bill) {
+    if (!await postBill(form.dataset.bill, form.dataset.due, record)) {
+      await reload()
+      formError(t('这期账单已入账或设置已更改。'))
+      return
+    }
+  } else {
+    const remember = form.elements.rememberMerchant?.checked
+    const merchant = remember ? { alias: form.dataset.merchant || entry.note, name: entry.note } : null
+    if (remember && (!entry.categoryId || !merchant.name || merchant.name.length > 120)) {
+      formError(t('记住商户前，请填写商户名称并选择分类。'))
+      return
+    }
+    if (await saveEntry(record, merchant) === 'invalid') {
+      formError(t('无法保存商户规则，请检查同名规则和分类。'))
+      return
+    }
+  }
   if (!repeat) dialog.close()
   if (!previous && !within(entry, period())) {
     state.month = entry.at.slice(0, 7)
@@ -1361,23 +1564,45 @@ const actions = {
   'confirm-import': () => confirmImport(),
   'export-backup': () => exportBackup(),
   'export-backup-range': () => openDataRange('export'),
+  'export-csv': () => openDataRange('csv'),
+  'manage-feature': ({ value }) => manageFeature(value),
+  'edit-feature': ({ list, value }) => featureForm(list, value),
+  'remove-feature': (_, control) => removeFeature(control.form),
+  'review-bill': ({ value, due }) => {
+    const occurrence = dueBills().find(item => item.bill.id === value && item.due === due)
+    if (occurrence) openEntry(null, null, occurrence)
+  },
+  'compare-drill': ({ value, start, end }) => {
+    resetLedgerFilters()
+    state.month = start.slice(0, 7)
+    state.range = { start, end }
+    state.ledgerDay = { start, end }
+    state.ledgerCategory = value
+    state.ledgerDirection = 'expense'
+    go('home', true)
+  },
   'delete-entry-range': () => openDataRange('delete'),
   'clear-ledger': openClearLedger,
   'pick-backup': () => pickFile('file-backup'),
   'confirm-restore': async (_, control) => {
-    const backup = pendingBackup
-    if (!backup) return
+    const request = pendingBackup
+    if (!request) return
     control.disabled = true
     try {
-      const { restored, latestDate, skippedDates } = await restoreLedger(backup)
+      const { restored, latestDate, skippedDates, changed } = await restoreLedger(request.backup, request.signature)
       const active = dialog.open && dialog.contains(control)
+      if (changed) {
+        await reload()
+        if (active && pendingBackup === request) previewBackup(request.backup, true)
+        return
+      }
       if (!restored) {
         const message = t('备份流水与其他日期的现有流水冲突，本次没有替换任何流水。')
         if (active) formError(message)
         else toast(message)
         return
       }
-      if (pendingBackup === backup) pendingBackup = null
+      if (pendingBackup === request) pendingBackup = null
       if (active) dialog.close()
       await reload()
       if (active && !dialog.open) {
@@ -1406,7 +1631,7 @@ document.addEventListener('click', event => {
 
 const forms = {
   'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
-  'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger,
+  'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger, 'feature-form': submitFeature,
   'screen-form': form => applyScreenText(form.elements.screenText.value)
 }
 dialog.addEventListener('submit', async event => {
@@ -1438,7 +1663,7 @@ dialog.addEventListener('change', event => {
     const category = row.querySelector('.import-category')
     category.hidden = draft.direction === 'transfer'
     category.textContent = importCategoryLabel(draft.categoryId)
-    if (!entry.note) row.querySelector('strong').textContent = directionLabel(draft.direction)
+    row.querySelector('strong').textContent = draft.note || directionLabel(draft.direction)
     return
   }
   const form = control.form
@@ -1504,6 +1729,24 @@ byId('file-import').addEventListener('change', async event => {
   } finally { if (event.target.files?.[0] === file) event.target.value = '' }
 })
 
+function previewBackup(backup, changed = false) {
+  const plan = planBackupRestore(state.entries, backup.entries)
+  pendingBackup = { backup, signature: restorePlanSignature(plan) }
+  const labels = { add: '新增', replace: '替换', skip: '跳过（日期冲突）' }
+  openDialog(t('确认恢复备份'), `<div class="form-grid">
+    ${changed ? `<p class="form-error">${t('账本已变化，已更新恢复预览。请重新确认。')}</p>` : ''}
+    <p>${t('备份包含 {0} 笔流水，共 {1} 个日期。', backup.entries.length, plan.changes.length)}</p>
+    <div class="restore-days" tabindex="0" role="region" aria-label="${t('按日期预览')}">
+      <table><thead><tr><th scope="col">${t('日期')}</th><th scope="col">${t('处理方式')}</th>
+        <th scope="col">${t('本机笔数')}</th><th scope="col">${t('备份笔数')}</th></tr></thead>
+        <tbody>${plan.changes.map(item => `<tr><th scope="row">${dayLabel(item.date)}</th>
+          <td>${t(labels[item.action])}</td><td>${item.previous}</td><td>${item.incoming}</td></tr>`).join('')}</tbody>
+      </table></div>
+    <p class="fine">${t('只替换预览中标为「替换」的日期。')}</p>
+    ${errorPlaceholder}<div class="form-footer">${cancelButton()}
+      ${button('confirm-restore', t('按日期恢复'), plan.entries.length ? '' : 'disabled', '', 'danger')}</div></div>`)
+}
+
 byId('file-backup').addEventListener('change', async event => {
   const file = event.target.files?.[0]
   if (!file) return
@@ -1516,15 +1759,7 @@ byId('file-backup').addEventListener('change', async event => {
       openDialog(t('恢复备份'), `<p class="fine">${t('这份备份没有流水，没有可恢复的日期。')}</p><div class="form-footer">${button('close', t('关闭'))}</div>`)
       return
     }
-    pendingBackup = backup
-    const plan = planBackupRestore(state.entries, backup.entries)
-    const dates = [...new Set(backup.entries.map(entry => entry.at.slice(0, 10)))].sort()
-    const span = dates.length === 1 ? dates[0] : t('{0} 至 {1}', dates[0], dates.at(-1))
-    openDialog(t('确认恢复备份'), `<div class="form-grid">
-      <p>${t('备份包含 {0} 笔流水，共 {1} 个日期。', `<strong>${backup.entries.length}</strong>`, `<strong>${dates.length}</strong>`)}</p>
-      <p class="fine">${t('{0}。仅按备份中有流水的东京日期替换，预计替换现有 {1} 笔流水。', span, plan.replaceIds.length)}</p>
-      ${plan.skippedDates ? `<p class="fine">${t('有 {0} 个日期的流水和其他日期冲突，恢复时会跳过。', plan.skippedDates)}</p>` : ''}
-      ${errorPlaceholder}<div class="form-footer">${cancelButton()}${button('confirm-restore', t('按日期恢复'), plan.entries.length ? '' : 'disabled', '', 'danger')}</div></div>`)
+    previewBackup(backup)
   } catch {
     if (event.target.files?.[0] === file) openDialog(t('恢复备份'), `<p class="form-error">${t('无法读取备份。请选择由小日账导出的有效 JSON 文件。')}</p>`)
   } finally { if (event.target.files?.[0] === file) event.target.value = '' }

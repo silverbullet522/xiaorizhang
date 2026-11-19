@@ -27,7 +27,11 @@ test('恢复备份只替换实际出现的日期，保留间隔日和其他月�
     { id: 'backed-up-third', at: '2026-07-03T08:30:00' }
   ]
   assert.deepEqual(planBackupRestore(current, backup), {
-    dates: ['2026-07-01', '2026-07-03'], skippedDates: 0, entries: backup, replaceIds: ['current-july']
+    dates: ['2026-07-01', '2026-07-03'], skippedDates: 0, entries: backup, replaceIds: ['current-july'],
+    changes: [
+      { date: '2026-07-01', action: 'replace', previous: 1, incoming: 1 },
+      { date: '2026-07-03', action: 'add', previous: 0, incoming: 1 }
+    ]
   })
   assert.deepEqual(planBackupRestore(current, []).replaceIds, [])
 })
@@ -44,7 +48,12 @@ test('恢复备份遇到跨日期标识冲突时保留冲突日期的记录', ()
     { id: 'backed-up-third', at: '2026-07-03T08:00:00' }
   ]
   assert.deepEqual(planBackupRestore(current, backup), {
-    dates: ['2026-07-03'], skippedDates: 2, entries: [backup[2]], replaceIds: ['replace-third']
+    dates: ['2026-07-03'], skippedDates: 2, entries: [backup[2]], replaceIds: ['replace-third'],
+    changes: [
+      { date: '2026-07-01', action: 'skip', previous: 1, incoming: 1 },
+      { date: '2026-07-02', action: 'skip', previous: 0, incoming: 1 },
+      { date: '2026-07-03', action: 'replace', previous: 1, incoming: 1 }
+    ]
   })
 })
 
@@ -98,7 +107,7 @@ test('日文账单保留海外原币并只将实扣额计入日元统计', () =>
   assert.equal(entries[0].minor, 3800)
   assert.equal(entries[0].note, '商店,東京')
   assert.equal(entries[1].note, 'チャージ')
-  assert.equal(entries[0].sourceKey, 'statement:12345678901234567890')
+  assert.match(entries[0].sourceKey, /^statement-event:\["12345678901234567890"/)
   const { expense, income, net, pending } = summarize(entries, 'JPY')
   assert.deepEqual([expense, income, net, pending], [6000, 500, -5500, 0])
   assert.equal(summarize(entries, 'CNY').pending, 2)
@@ -122,7 +131,7 @@ test('PayPay 导入跳过积分发放与撤销，保留同编号付款和积分�
   assert.deepEqual(ready.map(row => [row.number, row.entry.direction, row.entry.minor]), [
     [4, 'expense', 1280], [5, 'expense', 300], [6, 'income', 200], [7, 'income', 100]
   ])
-  assert.equal(ready[0].entry.sourceKey, 'statement:A1')
+  assert.match(ready[0].entry.sourceKey, /^statement-event:\["A1"/)
   assert.equal(duplicatePreviews(rows, ready.map(row => row.entry)).filter(row => row.duplicate).length, 4)
 })
 

@@ -225,7 +225,12 @@ export function importRows(table, options) {
       // The merchant alone is the note; 取引内容 (支払い, チャージ…) only fills in when there is no merchant.
       note = String([cell('merchant'), cell('type')].find(value => !emptyCell(value)) ?? '').trim().slice(0, 500)
       const id = String(cell('id') ?? '').trim()
-      if (!emptyCell(id)) sourceKey = `statement:${id}`
+      if (!emptyCell(id)) {
+        const type = String(cell('type') ?? '').normalize('NFKC').trim().slice(0, 80)
+        // Keep the legacy identity for spreadsheet IDs stored in scientific notation.
+        sourceKey = /^[+-]?\d+(?:\.\d+)?e[+-]?\d+$/i.test(id) ? `statement:${id}`
+          : `statement-event:${JSON.stringify([id, at, amount.direction, currency, amount.minor, type])}`
+      }
     } else {
       currency = emptyCell(cell('currency')) ? options.fixedCurrency : currencyCode(cell('currency'))
       if (!Object.hasOwn(currencies, currency)) return invalid('币种无效，请选择 JPY、CNY 或 USD')
@@ -249,14 +254,31 @@ export function importRows(table, options) {
   })
 }
 
+export function createImportMatcher(entries) {
+  const seen = new Map(entries.filter(entry => entry.sourceKey).map(entry => [entry.sourceKey, { entry }]))
+  return {
+    find(entry) {
+      const key = entry.sourceKey
+      if (!key || seen.has(key)) return seen.get(key)
+      if (!key.startsWith('statement-event:')) return undefined
+      // The timestamp and amount in a new key are immutable even after an entry is edited.
+      const [id, at, direction, currency, minor] = JSON.parse(key.slice('statement-event:'.length))
+      const match = seen.get(`statement:${id}`)
+      const previous = match?.entry
+      if (previous?.at === at && previous.direction === direction && previous.currency === currency && previous.minor === minor) return match
+      return undefined
+    },
+    add(row) { if (row.entry.sourceKey) seen.set(row.entry.sourceKey, row) }
+  }
+}
+
 export function duplicatePreviews(rows, entries) {
-  const seen = new Set(entries.map(entry => entry.sourceKey).filter(Boolean))
+  const matcher = createImportMatcher(entries)
   return rows.map(row => {
-    const key = row.entry?.sourceKey
-    if (!key) return row
-    const duplicate = seen.has(key)
-    seen.add(key)
-    return { ...row, duplicate }
+    if (!row.entry?.sourceKey) return row
+    const match = matcher.find(row.entry)
+    if (!match) matcher.add(row)
+    return { ...row, duplicate: Boolean(match), match }
   })
 }
 
@@ -267,7 +289,12 @@ export function within(entry, range) {
 
 export function planBackupRestore(current, backup) {
   const day = entry => entry.at.slice(0, 10)
-  const dates = new Set(backup.map(day))
+  const counts = new Map()
+  for (const entry of backup) {
+    const date = day(entry)
+    counts.set(date, (counts.get(date) ?? 0) + 1)
+  }
+  const dates = new Set(counts.keys())
   const datesById = new Map(backup.map(entry => [entry.id, day(entry)]))
   const datesBySource = new Map(backup.filter(entry => entry.sourceKey).map(entry => [entry.sourceKey, day(entry)]))
   const currentByDate = new Map()
@@ -292,10 +319,16 @@ export function planBackupRestore(current, backup) {
 
   return {
     dates: [...dates].sort(), skippedDates,
+    changes: [...counts.keys()].sort().map(date => {
+      const previous = currentByDate.get(date)?.length ?? 0
+      return { date, previous, incoming: counts.get(date), action: !dates.has(date) ? 'skip' : previous ? 'replace' : 'add' }
+    }),
     entries: backup.filter(entry => dates.has(day(entry))),
     replaceIds: current.filter(entry => dates.has(day(entry))).map(entry => entry.id)
   }
 }
+
+export const restorePlanSignature = plan => JSON.stringify([plan.changes, [...plan.replaceIds].sort()])
 
 export function summarize(entries, currency) {
   const key = currency === 'CNY' ? 'yuan' : 'yen'

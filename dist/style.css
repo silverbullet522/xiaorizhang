@@ -376,6 +376,34 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 .import-row .import-category { margin-top: 2px; color: var(--ink-2); overflow-wrap: anywhere }
 .import-row select { max-width: 96px; min-height: 36px; font-size: 16px }
 
+/* Budgets, recurring bills and month comparison */
+.feature-panel { margin-block: 14px }
+.book-digest > .feature-panel { margin-bottom: 0 }
+.feature-panel h3 { margin: 12px 0 4px; font-size: 13.5px }
+.feature-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 8px }
+.feature-metrics dt { color: var(--muted); font-size: 12px; overflow-wrap: anywhere }
+.feature-metrics dd { font-weight: 650; overflow-wrap: anywhere }
+.feature-row {
+  display: flex; width: 100%; min-height: 44px; gap: 8px; align-items: center; padding: 9px 0;
+  border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); text-align: left;
+}
+button.feature-row { cursor: pointer }
+.feature-row > span { flex: 1; min-width: 0; overflow-wrap: anywhere }
+.feature-row > svg { flex: none; color: var(--muted) }
+.feature-row small, .feature-list small { display: block; color: var(--muted); font-size: 12.5px }
+.feature-list { display: grid; gap: 12px; list-style: none; padding: 0; margin: 0 }
+.feature-amount { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px }
+.feature-amount strong { overflow-wrap: anywhere }
+.feature-list progress { display: block; width: 100%; height: 9px; margin: 6px 0; accent-color: var(--brand) }
+.import-match[open] { grid-column: 1 / -1; margin-top: 5px }
+.import-match summary { display: list-item; width: fit-content; cursor: pointer }
+.import-match small { overflow-wrap: anywhere }
+.restore-days { max-height: 17rem; overflow: auto; border: 1px solid var(--line); border-radius: 10px }
+.restore-days table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap }
+.restore-days :is(th, td) { padding: 8px; border-bottom: 1px solid var(--line); text-align: left }
+.restore-days thead { position: sticky; top: 0; background: var(--surface-2) }
+.restore-days tbody tr:last-child > * { border-bottom: 0 }
+
 /* Entry sheet */
 .entry-sheet[open] { display: flex; flex-direction: column; width: min(560px, calc(100% - 32px)); max-height: min(93dvh, 860px); overflow: hidden }
 .entry-sheet .dialog-top { flex: none; padding: 14px 18px 6px }

@@ -1,5 +1,6 @@
-import { currencies, dateTime, defaults, directions, planBackupRestore, presetRenames, withQuotes, within } from './core.mjs'
+import { createImportMatcher, currencies, dateTime, defaults, directions, planBackupRestore, presetRenames, restorePlanSignature, tokyoNow, withQuotes, within } from './core.mjs'
 import { iconNames } from './icons.mjs'
+import { billKey, findMerchantRule, firstUnpostedDate, merchantKey, nextBillDate, readFeatures, validFeature } from './features.mjs'
 
 const database = new Promise((resolve, reject) => {
   const open = indexedDB.open('hiba-ledger', 1)
@@ -100,11 +101,13 @@ export function readLedger() {
     const categories = store('categories').getAll()
     const currency = store('settings').get('currency')
     const deletedPresets = store('settings').get('deletedPresets')
-    deletedPresets.onsuccess = () => done({
+    const features = store('settings').get('features')
+    features.onsuccess = () => done({
       entries: entries.result.sort((a, b) => b.at.localeCompare(a.at) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)),
       categories: categories.result,
       currency: currency.result ?? 'JPY',
-      deletedPresets: deletedPresets.result ?? []
+      deletedPresets: deletedPresets.result ?? [],
+      features: readFeatures(features.result, categoryDirections(categories.result))
     })
   })
 }
@@ -114,13 +117,31 @@ const withExistingCategory = (entry, categories) => entry.categoryId && categori
   ? { ...entry, categoryId: null }
   : entry
 
-export const saveEntry = entry => saveEntries([entry])
-export const saveEntries = list => transact(['entries', 'categories'], 'readwrite', store => {
+export const saveEntry = (entry, merchant) => saveEntries([entry], merchant)
+export const saveEntries = (list, merchant) => transact(merchant ? ['entries', 'categories', 'settings'] : ['entries', 'categories'], 'readwrite', (store, done) => {
   const entries = store('entries')
   const request = store('categories').getAll()
   request.onsuccess = () => {
     const categories = categoryDirections(request.result)
-    for (const entry of list) entries.put(withExistingCategory(entry, categories))
+    const writeEntries = () => {
+      for (const entry of list) entries.put(withExistingCategory(entry, categories))
+    }
+    if (!merchant) { writeEntries(); return }
+    const settings = store('settings')
+    const saved = settings.get('features')
+    saved.onsuccess = () => {
+      const features = readFeatures(saved.result, categories)
+      const key = merchantKey(merchant.alias)
+      const previous = findMerchantRule(features.merchants, merchant.alias, request.result, list[0].direction).rule
+      const aliases = previous?.aliases.some(alias => merchantKey(alias) === key) ? previous.aliases : [...(previous?.aliases ?? []), merchant.alias]
+      const rule = validFeature('merchants', { id: previous?.id ?? crypto.randomUUID(), aliases,
+        name: merchant.name, categoryId: list[0].categoryId }, categories)
+      const others = features.merchants.filter(item => item.id !== rule?.id)
+      if (!rule || !rule.categoryId || featureConflict('merchants', rule, others)) { done('invalid'); return }
+      features.merchants = [...others, rule]
+      settings.put(features, 'features')
+      writeEntries()
+    }
   }
 })
 export const deleteEntry = id => transact(['entries'], 'readwrite', store => store('entries').delete(id))
@@ -162,6 +183,77 @@ export function clearLedger() {
 
 export const saveCurrency = currency => transact(['settings'], 'readwrite', store => store('settings').put(currency, 'currency'))
 
+function featureConflict(list, item, others) {
+  if (list === 'budgets') return others.some(value => value.categoryId === item.categoryId && value.currency === item.currency)
+  if (list === 'merchants') {
+    const keys = new Set([item.name, ...item.aliases].map(merchantKey).filter(Boolean))
+    return others.some(value => [value.name, ...value.aliases].some(alias => keys.has(merchantKey(alias))))
+  }
+  return false
+}
+
+export function saveFeature(list, item, previous) {
+  return transact(['settings', 'categories'], 'readwrite', (store, done) => {
+    const settings = store('settings')
+    const categories = store('categories').getAll()
+    const current = settings.get('features')
+    current.onsuccess = () => {
+      const directions = categoryDirections(categories.result)
+      const features = readFeatures(current.result, directions)
+      const valid = validFeature(list, item, directions)
+      if (!valid) { done('invalid'); return }
+      const existing = features[list].find(value => value.id === valid.id)
+      if (previous && JSON.stringify(previous) !== JSON.stringify(existing)) { done('changed'); return }
+      const others = features[list].filter(value => value.id !== valid.id)
+      if (featureConflict(list, valid, others)) { done('duplicate'); return }
+      features[list] = [...others, valid]
+      settings.put(features, 'features')
+      done('saved')
+    }
+  })
+}
+
+export function deleteFeature(list, id) {
+  return transact(['settings', 'categories'], 'readwrite', store => {
+    const settings = store('settings')
+    const categories = store('categories').getAll()
+    const current = settings.get('features')
+    current.onsuccess = () => {
+      const features = readFeatures(current.result, categoryDirections(categories.result))
+      features[list] = features[list].filter(item => item.id !== id)
+      settings.put(features, 'features')
+    }
+  })
+}
+
+export function postBill(id, due, entry) {
+  return transact(['settings', 'categories', 'entries'], 'readwrite', (store, done) => {
+    const settings = store('settings')
+    const entries = store('entries')
+    const categories = store('categories').getAll()
+    const current = settings.get('features')
+    current.onsuccess = () => {
+      const directions = categoryDirections(categories.result)
+      const features = readFeatures(current.result, directions)
+      const bill = features.bills.find(item => item.id === id)
+      const source = billKey(id, due)
+      // Reuse the index to look up source keys only for this schedule, inside the write transaction.
+      const prior = entries.index('sourceKey').getAll(IDBKeyRange.bound(billKey(id, ''), billKey(id, '\uffff')))
+      prior.onsuccess = () => {
+        const posted = new Set(prior.result.map(item => item.sourceKey))
+        if (!bill || !due || due > tokyoNow().slice(0, 10) || firstUnpostedDate(bill, posted) !== due) {
+          done(false)
+          return
+        }
+        entries.add(withExistingCategory({ ...entry, sourceKey: source }, directions))
+        bill.next = nextBillDate(bill, due)
+        settings.put(features, 'features')
+        done(true)
+      }
+    }
+  })
+}
+
 export function saveCategory(category, { editing = false } = {}) {
   return transact(['categories'], 'readwrite', (store, done) => {
     const target = store('categories')
@@ -192,7 +284,8 @@ export function deleteCategory(id) {
     const settings = store('settings')
     const categoryList = categories.getAll()
     const deleted = settings.get('deletedPresets')
-    deleted.onsuccess = () => {
+    const configured = settings.get('features')
+    configured.onsuccess = () => {
       if (!categoryList.result.some(item => item.id === id)) { done(null); return }
       const removed = categoryList.result.filter(item => item.id === id || item.parentId === id)
       const removedIds = new Set(removed.map(item => item.id))
@@ -203,6 +296,10 @@ export function deleteCategory(id) {
         categories.delete(item.id)
       }
       settings.put([...deletedPresets], 'deletedPresets')
+      const features = readFeatures(configured.result, categoryDirections(categoryList.result))
+      features.budgets = features.budgets.filter(item => !removedIds.has(item.categoryId))
+      for (const item of [...features.merchants, ...features.bills]) if (removedIds.has(item.categoryId)) item.categoryId = null
+      settings.put(features, 'features')
       const affected = entries.getAll()
       affected.onsuccess = () => {
         let uncategorized = 0
@@ -224,13 +321,13 @@ export function addEntries(entries) {
     const request = store('categories').getAll()
     request.onsuccess = () => {
       // The read and inserts share one write transaction across all open tabs.
-      const seen = new Set(existing.result.map(entry => entry.sourceKey).filter(Boolean))
+      const matcher = createImportMatcher(existing.result)
       const categories = categoryDirections(request.result)
       let added = 0
       for (const entry of entries) {
-        if (entry.sourceKey && seen.has(entry.sourceKey)) continue
+        if (matcher.find(entry)) continue
         target.add(withExistingCategory(entry, categories))
-        if (entry.sourceKey) seen.add(entry.sourceKey)
+        matcher.add({ entry })
         added++
       }
       done(added)
@@ -267,9 +364,9 @@ export function completeRates(ids, quotesFor) {
   })
 }
 
-export function backupDocument({ entries, categories, currency, deletedPresets }) {
+export function backupDocument({ entries, categories, currency, deletedPresets, features }) {
   return { format: 'hiba-ledger', version: 1, exportedAt: new Date().toISOString(), currency, categories, entries,
-    ...(deletedPresets?.length ? { deletedPresets } : {}) }
+    ...(deletedPresets?.length ? { deletedPresets } : {}), ...(features ? { features } : {}) }
 }
 
 const shortText = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
@@ -332,7 +429,8 @@ export function validateBackup(input) {
     if (sourceKey) sources.add(sourceKey)
     return { id, createdAt, at, direction, currency, minor, yen, yuan, categoryId, note, settlementYen, sourceRate, sourceKey, fx: approvedQuotes }
   })
-  return { entries, categories, currency: input.currency, deletedPresets: [...deletedPresets] }
+  const features = readFeatures(input.features, categoryDirections(categories))
+  return { entries, categories, currency: input.currency, deletedPresets: [...deletedPresets], features }
 }
 
 function categoryRestorer(store, current, backup, deletedPresets) {
@@ -369,7 +467,7 @@ function categoryRestorer(store, current, backup, deletedPresets) {
   return restoreCategory
 }
 
-export function restoreLedger(backup) {
+export function restoreLedger(backup, signature) {
   return transact(['entries', 'categories', 'settings'], 'readwrite', (store, done) => {
     const entries = store('entries')
     const categories = store('categories')
@@ -378,13 +476,16 @@ export function restoreLedger(backup) {
     const currentCategories = categories.getAll()
     const currency = settings.get('currency')
     const deleted = settings.get('deletedPresets')
-    deleted.onsuccess = () => {
+    const configured = settings.get('features')
+    configured.onsuccess = () => {
       const plan = planBackupRestore(currentEntries.result, backup.entries)
+      if (signature && signature !== restorePlanSignature(plan)) { done({ changed: true }); return }
       done({ restored: plan.entries.length, latestDate: plan.dates.at(-1), skippedDates: plan.skippedDates })
       if (!plan.entries.length) return
 
       const deletedPresets = new Set(deleted.result ?? [])
       const fresh = !currentEntries.result.length && currency.result === undefined && !deletedPresets.size &&
+        !Object.values(readFeatures(configured.result, categoryDirections(currentCategories.result))).some(items => items.length) &&
         currentCategories.result.length === defaults.length && currentCategories.result.every(item => {
           const preset = presetsById.get(item.id)
           return preset && preset.name === item.name && preset.icon === item.icon && preset.parentId === item.parentId && preset.direction === item.direction && !item.presetId
@@ -397,6 +498,7 @@ export function restoreLedger(backup) {
         backup.categories.forEach(item => categories.add(item))
         settings.put(backup.currency, 'currency')
         settings.put(backup.deletedPresets ?? [], 'deletedPresets')
+        if (backup.features) settings.put(backup.features, 'features')
         syncPresets(categories, settings)
         plan.entries.forEach(item => entries.add(item))
         return
