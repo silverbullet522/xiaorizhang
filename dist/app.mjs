@@ -3,7 +3,7 @@ import {
   summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
-  addEntries, backupDocument, completeRates, deleteEntries, deleteEntry, readLedger, restoreLedger,
+  addEntries, backupDocument, completeRates, deleteCategory, deleteEntries, deleteEntry, readLedger, restoreLedger,
   saveCategory, saveCurrency, saveEntries, saveEntry, validateBackup
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
@@ -236,17 +236,18 @@ function refreshLedgerResults() {
 
 function categoryPage() {
   const direction = state.categoryDirection
-  const editCategoryButton = (item, className, size) => `<button type="button" class="${className}" data-action="category-edit" data-value="${escape(item.id)}">
-    ${categoryArt(item.icon, size, item.name)}<span>${escape(item.name)}</span></button>`
+  const editCategoryButton = (item, className, size, affordance) => `<button type="button" class="${className}" data-action="category-edit" data-value="${escape(item.id)}" aria-label="编辑${escape(item.name)}">
+    ${categoryArt(item.icon, size, item.name)}<span class="category-edit-name">${escape(item.name)}</span>${icon(affordance, 15)}</button>`
   const groups = topCategories(direction).map(item => {
-    const tags = children(item.id).map(child => editCategoryButton(child, 'chip', 19)).join('')
-    return `<section class="panel"><div class="group-head"><h2>${editCategoryButton(item, 'group-title', 23)}</h2>
+    const tags = children(item.id).map(child => editCategoryButton(child, 'child-category', 18, 'right')).join('')
+    return `<section class="panel category-group"><div class="group-head"><h2>${editCategoryButton(item, 'group-title', 23, 'pencil')}</h2>
       ${icoButton('category-new', 'plus', '新增二级分类', `data-value="${escape(item.id)}"`)}</div>
-      <div class="chips">${tags || '<span class="fine">还没有二级分类</span>'}</div></section>`
+      ${tags ? `<div class="category-rows">${tags}</div>` : ''}</section>`
   })
-  return `<div class="page-heading"><div><h1>分类</h1><p>点按分类可修改名称和图标</p></div>
+  return `<div class="page-heading"><h1>分类</h1>
     <div class="filter-actions">${tabs('category-direction', { expense: '支出', income: '收入' }, direction)}
-    ${button('category-new', '新增一级分类', '', 'plus', 'primary')}</div></div><div class="groups">${groups.join('')}</div>`
+    ${button('category-new', '新增一级分类', '', 'plus', 'primary')}</div></div>
+    ${groups.length ? `<div class="groups">${groups.join('')}</div>` : `<p class="panel fine">还没有${directions[direction]}分类</p>`}`
 }
 
 function render() {
@@ -403,7 +404,8 @@ function openCategoryForm({ parentId, categoryId } = {}) {
     ${direction ? `<p class="fine">${directions[direction]}${parent ? ` · ${escape(parent.name)}` : ''}</p>` : selectField('收支类型', 'direction', ['expense', 'income'].map(id => option(id, directions[id], state.categoryDirection)).join(''))}
     ${field('分类名称', `<input name="name" value="${escape(category?.name)}" maxlength="24" required autocomplete="off" placeholder="输入分类名称">`)}
     <div class="field"><span>图标</span>${iconPicker(selectedIcon)}</div>
-    ${errorPlaceholder}<div class="form-footer">${cancelButton}${submitButton('保存分类')}</div></form>`)
+    ${errorPlaceholder}<div class="form-footer">
+    ${category ? button('category-delete', '删除分类', '', 'trash', 'danger leading') : ''}${cancelButton}${submitButton('保存分类')}</div></form>`)
   if (category) {
     const picker = dialog.querySelector('.icon-picker')
     const active = picker.querySelector('[aria-checked="true"]')
@@ -954,6 +956,29 @@ async function submitCategory(form) {
   toast('分类已保存')
 }
 
+async function deleteCategoryFromForm(control) {
+  const form = control.form
+  if (form.dataset.saving) return
+  const category = state.categories.find(item => item.id === form.dataset.id)
+  if (!category) return
+  const childrenNotice = category.parentId === null ? '其下的所有二级分类也会一并删除。\n' : ''
+  if (!confirm(`删除「${category.name}」？\n${childrenNotice}相关流水会保留，并归为「未分类」。`)) return
+
+  form.dataset.saving = 'true'
+  control.disabled = true
+  try {
+    const result = await deleteCategory(category.id)
+    if (result?.removedIds.includes(state.ledgerCategory)) state.ledgerCategory = null
+    await reload()
+    if (byId('category-form') === form && dialog.open) dialog.close()
+    const message = result ? '分类已删除' : '分类已不存在'
+    toast(result?.uncategorized ? `${message}，${result.uncategorized} 笔流水已归为未分类` : message)
+  } finally {
+    delete form.dataset.saving
+    control.disabled = false
+  }
+}
+
 function submitPeriod(form) {
   const data = new FormData(form)
   const start = data.get('start')
@@ -1045,6 +1070,7 @@ const actions = {
   },
   'category-new': ({ value }) => openCategoryForm({ parentId: value }),
   'category-edit': ({ value }) => openCategoryForm({ categoryId: value }),
+  'category-delete': (_, control) => deleteCategoryFromForm(control),
   'category-add': ({ value }, control) => openCategoryAdder(control.closest('.category-picker'), value),
   'pick-icon': ({ value }, control) => {
     const holder = control.closest('[data-icon-holder]')

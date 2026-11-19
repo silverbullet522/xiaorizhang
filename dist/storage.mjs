@@ -38,10 +38,12 @@ function addMissingDefaults(db) {
 function syncPresets(store, settings) {
   const request = store.getAll()
   const version = settings.get('presets')
-  version.onsuccess = () => {
-    // Requests in one transaction finish in order, so the categories are ready when the version arrives.
+  const deleted = settings.get('deletedPresets')
+  deleted.onsuccess = () => {
+    // Requests in one transaction finish in order.
     const existing = request.result
     const from = version.result ?? 1
+    const deletedPresets = new Set(deleted.result ?? [])
     const key = item => JSON.stringify([item.direction, item.parentId, item.name])
     if (from < presetVersion) {
       for (const item of existing) {
@@ -59,6 +61,7 @@ function syncPresets(store, settings) {
     const byName = new Map(existing.map(item => [key(item), item]))
     const parentFor = new Map()
     for (const item of defaults) {
+      if (deletedPresets.has(item.id)) continue
       const parent = parentFor.get(item.parentId)
       if (item.parentId !== null && !parent) continue
       const preset = { ...item, parentId: parent?.id ?? null }
@@ -96,18 +99,29 @@ export function readLedger() {
     const entries = store('entries').getAll()
     const categories = store('categories').getAll()
     const currency = store('settings').get('currency')
-    currency.onsuccess = () => done({
+    const deletedPresets = store('settings').get('deletedPresets')
+    deletedPresets.onsuccess = () => done({
       entries: entries.result.sort((a, b) => b.at.localeCompare(a.at) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)),
       categories: categories.result,
-      currency: currency.result ?? 'JPY'
+      currency: currency.result ?? 'JPY',
+      deletedPresets: deletedPresets.result ?? []
     })
   })
 }
 
-export const saveEntry = entry => transact(['entries'], 'readwrite', store => store('entries').put(entry))
-export const saveEntries = list => transact(['entries'], 'readwrite', store => {
+const categoryDirections = list => new Map(list.map(item => [item.id, item.direction]))
+const withExistingCategory = (entry, categories) => entry.categoryId && categories.get(entry.categoryId) !== entry.direction
+  ? { ...entry, categoryId: null }
+  : entry
+
+export const saveEntry = entry => saveEntries([entry])
+export const saveEntries = list => transact(['entries', 'categories'], 'readwrite', store => {
   const entries = store('entries')
-  for (const entry of list) entries.put(entry)
+  const request = store('categories').getAll()
+  request.onsuccess = () => {
+    const categories = categoryDirections(request.result)
+    for (const entry of list) entries.put(withExistingCategory(entry, categories))
+  }
 })
 export const deleteEntry = id => transact(['entries'], 'readwrite', store => store('entries').delete(id))
 // One transaction, so a failure leaves every selected entry in place.
@@ -140,17 +154,51 @@ export function saveCategory(category, { editing = false } = {}) {
   })
 }
 
+export function deleteCategory(id) {
+  return transact(['categories', 'entries', 'settings'], 'readwrite', (store, done) => {
+    const categories = store('categories')
+    const entries = store('entries')
+    const settings = store('settings')
+    const categoryList = categories.getAll()
+    const deleted = settings.get('deletedPresets')
+    deleted.onsuccess = () => {
+      if (!categoryList.result.some(item => item.id === id)) { done(null); return }
+      const removed = categoryList.result.filter(item => item.id === id || item.parentId === id)
+      const removedIds = new Set(removed.map(item => item.id))
+      const deletedPresets = new Set(deleted.result ?? [])
+      for (const item of removed) {
+        const presetId = item.presetId ?? item.id
+        if (presetsById.has(presetId)) deletedPresets.add(presetId)
+        categories.delete(item.id)
+      }
+      settings.put([...deletedPresets], 'deletedPresets')
+      const affected = entries.getAll()
+      affected.onsuccess = () => {
+        let uncategorized = 0
+        for (const entry of affected.result) {
+          if (!removedIds.has(entry.categoryId)) continue
+          entries.put({ ...entry, categoryId: null })
+          uncategorized++
+        }
+        done({ removedIds: [...removedIds], uncategorized })
+      }
+    }
+  })
+}
+
 export function addEntries(entries) {
-  return transact(['entries'], 'readwrite', (store, done) => {
+  return transact(['entries', 'categories'], 'readwrite', (store, done) => {
     const target = store('entries')
     const existing = target.getAll()
-    existing.onsuccess = () => {
+    const request = store('categories').getAll()
+    request.onsuccess = () => {
       // The read and inserts share one write transaction across all open tabs.
       const seen = new Set(existing.result.map(entry => entry.sourceKey).filter(Boolean))
+      const categories = categoryDirections(request.result)
       let added = 0
       for (const entry of entries) {
         if (entry.sourceKey && seen.has(entry.sourceKey)) continue
-        target.add(entry)
+        target.add(withExistingCategory(entry, categories))
         if (entry.sourceKey) seen.add(entry.sourceKey)
         added++
       }
@@ -188,8 +236,9 @@ export function completeRates(ids, quotesFor) {
   })
 }
 
-export function backupDocument({ entries, categories, currency }) {
-  return { format: 'hiba-ledger', version: 1, exportedAt: new Date().toISOString(), currency, categories, entries }
+export function backupDocument({ entries, categories, currency, deletedPresets }) {
+  return { format: 'hiba-ledger', version: 1, exportedAt: new Date().toISOString(), currency, categories, entries,
+    ...(deletedPresets?.length ? { deletedPresets } : {}) }
 }
 
 const shortText = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max
@@ -202,6 +251,9 @@ export function validateBackup(input) {
   const fail = () => { throw new Error('无法恢复。请选择由小日账导出的有效备份文件。') }
   if (input?.format !== 'hiba-ledger' || input.version !== 1 || !['JPY', 'CNY'].includes(input.currency) ||
       !Array.isArray(input.entries) || !Array.isArray(input.categories)) fail()
+  const deleted = input.deletedPresets === undefined ? [] : input.deletedPresets
+  if (!Array.isArray(deleted) || deleted.some(id => !presetsById.has(id))) fail()
+  const deletedPresets = new Set(deleted)
   const categoryMap = new Map()
   const names = new Set()
   const representedPresets = new Set()
@@ -209,7 +261,7 @@ export function validateBackup(input) {
     const { id, parentId, direction, icon, name, presetId } = item ?? {}
     const key = JSON.stringify([direction, parentId, name])
     if (!safeId(id) || !(parentId === null || safeId(parentId)) || !['income', 'expense'].includes(direction) ||
-        !safeIcons.has(icon) || !shortText(name, 24) || categoryMap.has(id) || names.has(key)) fail()
+        !safeIcons.has(icon) || !shortText(name, 24) || categoryMap.has(id) || names.has(key) || deletedPresets.has(id) || deletedPresets.has(presetId)) fail()
     const category = { id, parentId, direction, icon, name }
     if (presetId !== undefined) {
       const preset = presetsById.get(presetId)
@@ -249,7 +301,7 @@ export function validateBackup(input) {
     if (sourceKey) sources.add(sourceKey)
     return { id, createdAt, at, direction, currency, minor, yen, yuan, categoryId, note, settlementYen, sourceRate, sourceKey, fx: approvedQuotes }
   })
-  return { entries, categories, currency: input.currency }
+  return { entries, categories, currency: input.currency, deletedPresets: [...deletedPresets] }
 }
 
 export function restoreLedger(backup) {
@@ -262,6 +314,7 @@ export function restoreLedger(backup) {
     backup.categories.forEach(item => categories.add(item))
     const settings = store('settings')
     settings.put(backup.currency, 'currency')
+    settings.put(backup.deletedPresets ?? [], 'deletedPresets')
     syncPresets(categories, settings)
   })
 }
