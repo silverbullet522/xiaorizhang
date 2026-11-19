@@ -13,6 +13,7 @@ const paths = {
   calendar: '<rect x="4" y="6" width="16" height="15" rx="2"/><path d="M8 3v5m8-5v5M4 11h16"/>',
   left: '<path d="m15 6-6 6 6 6"/>',
   right: '<path d="m9 6 6 6-6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   erase: '<path d="M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9L3 12zM12 9l6 6m0-6-6 6"/>',
   trash: '<path d="M4 7h16m-10 4v5m4-5v5m-8-9 1 13h10l1-13m-8 0V4h4v3"/>',

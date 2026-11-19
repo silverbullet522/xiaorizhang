@@ -166,7 +166,7 @@ function ledger() {
     state.ledgerCategory !== null && (category?.name ?? '未分类')].filter(Boolean)
   return `<div class="page-heading"><div><h1>流水</h1><p>${filtered.length} 笔记录</p></div>${periodControls()}</div>
     <div class="ledger-filter">
-    ${tabs('ledger-direction', { all: '全部', ...directions }, state.ledgerDirection)}
+    ${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
     ${button('pick-import', '导入账单', '', 'upload')}</div>
     ${restrictions.length ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除当前细分筛选">${escape(restrictions.join(' · '))} ×</button>` : ''}
     <div class="day-stack">${dayCards(filtered)}</div>
@@ -321,6 +321,10 @@ function screenNotice(screen) {
   return `<p class="screen-review warn">${icon('scan', 18)}<span>可能已经记过：${when} · ${escape(duplicate.note || category?.name || '未分类')} ${money(duplicate.minor, duplicate.currency)}。确认不是同一笔再保存。</span></p>`
 }
 
+// Transfers are no longer offered, except to keep an existing transfer editable as it is.
+const directionsFor = current => Object.entries(directions).filter(([key]) => key !== 'transfer' || current === 'transfer')
+const dayText = day => !dateTime(day) ? '选择日期' : day === tokyoNow().slice(0, 10) ? '今天' : day.replaceAll('-', '/')
+
 function openEntry(id, screen) {
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
@@ -330,7 +334,7 @@ function openEntry(id, screen) {
   const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
   const direction = entry?.direction ?? screen?.direction ?? 'expense'
   const choices = (screen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
-  const directionChoices = Object.entries(directions).map(([key, label]) => `<label class="entry-direction">
+  const directionChoices = directionsFor(direction).map(([key, label]) => `<label class="entry-direction">
     <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
     <span>${label}</span></label>`).join('')
   openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" data-id="${entry?.id ?? ''}">
@@ -339,7 +343,8 @@ function openEntry(id, screen) {
     <div class="entry-toolbar">
       <fieldset class="entry-modes"><legend class="sr-only">收支类型</legend>${directionChoices}</fieldset>
       <div class="entry-clock">
-        <label><span class="sr-only">日期 · 东京时间</span>
+        <label class="entry-day"><span class="entry-day-text" aria-hidden="true">${dayText(at.slice(0, 10))}</span>${icon('down', 14)}
+          <span class="sr-only">日期 · 东京时间</span>
           <input name="day" type="date" min="1900-01-01" max="9999-12-31" value="${at.slice(0, 10)}" required></label>
         <label><span class="sr-only">时间</span><input name="time" type="time" step="1" value="${at.slice(11)}" required></label>
       </div>
@@ -608,7 +613,7 @@ function importPreview() {
       const meta = `第 ${number} 行 · ${entry.at.replace('T', ' ')} · ${money(entry.minor, entry.currency)} ${entry.currency}`
       return `<div class="import-row"><div><strong>${escape(entry.note || directions[entry.direction])}</strong><small>${meta}</small></div>
         ${duplicate ? '<span class="chip">重复</span>' : `<select class="control" aria-label="第 ${number} 行收支类型" data-import-row="${number}">
-        ${Object.entries(directions).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
+        ${directionsFor(direction).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
     }).join('')}</div>
     ${!rows.length ? '<p class="fine">这张表只有表头。</p>' : ''}
     <div class="form-footer">${rows.length > importState.limit ? button('more-import', '显示更多', '', '', 'leading') : ''}
@@ -898,6 +903,7 @@ dialog.addEventListener('change', event => {
   }
   if (form?.id !== 'entry-form') return
   if (control.name === 'direction') selectCategories(form)
+  if (control.name === 'day') form.querySelector('.entry-day-text').textContent = dayText(control.value)
   if (control.name === 'currency') updateEntryCurrency(form)
   if (['currency', 'day', 'time'].includes(control.name)) refreshEntryQuote(form, control.name !== 'time')
 })
@@ -909,8 +915,15 @@ dialog.addEventListener('keydown', event => {
   if (!event.isComposing && event.keyCode !== 229) saveInlineCategory(event.target.form).catch(handleError)
 })
 
+// The date chip shows its own text over an invisible native input; mouse users need the picker opened for them.
+dialog.addEventListener('click', event => {
+  if (!event.target.matches('.entry-day input') || !matchMedia('(pointer: fine)').matches) return
+  try { event.target.showPicker() } catch { /* Older browsers fall back to the focused input. */ }
+})
+
 dialog.addEventListener('input', event => {
   const control = event.target
+  if (control.form?.id === 'entry-form' && control.name === 'day') control.form.querySelector('.entry-day-text').textContent = dayText(control.value)
   if (control.form?.id === 'entry-form' && control.name === 'amount') refreshEntryQuote(control.form, false)
 })
 
