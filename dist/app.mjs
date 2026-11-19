@@ -27,6 +27,7 @@ const state = {
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
 const phone = standalone || matchMedia('(pointer: coarse)').matches
+const allowsMotion = matchMedia('(prefers-reduced-motion: no-preference)')
 let importState
 let hiddenAt = 0
 let pasteTimer
@@ -986,12 +987,17 @@ const actions = {
   'entry-category': ({ value }, control) => {
     const form = byId('entry-form')
     const group = control.parentElement
+    const opensChildren = control.getAttribute('aria-expanded') === 'false'
     selectCategories(form, value)
     const selected = Array.from(group.children).find(item => item.dataset.value === value)
     selected?.focus({ preventScroll: true })
     if (selected?.getAttribute('aria-expanded') === 'true') {
       selected.scrollIntoView({ block: 'nearest' })
-      byId('entry-subcategories').firstElementChild.scrollIntoView({ block: 'nearest' })
+      const panel = byId('entry-subcategories')
+      panel.firstElementChild.scrollIntoView({ block: 'nearest' })
+      if (opensChildren && allowsMotion.matches) {
+        panel.animate([{ opacity: .55, transform: 'translateY(-4px)' }, { opacity: 1, transform: 'none' }], { duration: 180, easing: 'ease-out' })
+      }
     }
   },
   'screen-paste': pasteFromScreen,
