@@ -9,7 +9,7 @@ import {
 import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
-import { likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
+import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
 import {
   brand, breakdown, button, categoryArt, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
@@ -900,6 +900,25 @@ function importMapping() {
     </form>`
 }
 
+function prepareImportPreview(options) {
+  importState.preview = importRows(importState.table, options)
+  importState.suggestCategory = createCategorySuggester(state.entries, state.categories)
+}
+
+function importEntryDraft(number, entry) {
+  const direction = importState.overrides.get(number) ?? entry.direction
+  const draft = { ...entry, direction, categoryId: direction === entry.direction ? entry.categoryId : null }
+  if (direction !== 'transfer' && !draft.categoryId) draft.categoryId = importState.suggestCategory(draft, draft.note)
+  return draft
+}
+
+function importCategoryLabel(id) {
+  const category = state.categories.find(item => item.id === id)
+  if (!category) return '未分类'
+  const parent = state.categories.find(item => item.id === category.parentId)
+  return parent ? `${parent.name} / ${category.name}` : category.name
+}
+
 function importPreview() {
   if (!importState.preview) return ''
   const rows = duplicatePreviews(importState.preview, state.entries)
@@ -911,9 +930,10 @@ function importPreview() {
     ${rows.length ? confirm : ''}</div>
     <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, error }) => {
       if (!entry) return `<div class="import-row"><span>第 ${number} 行</span><span class="form-error">${escape(error)}</span></div>`
-      const direction = importState.overrides.get(number) ?? entry.direction
+      const { direction, categoryId } = duplicate ? entry : importEntryDraft(number, entry)
       const meta = `第 ${number} 行 · ${entry.at.replace('T', ' ')} · ${money(entry.minor, entry.currency)} ${entry.currency}`
-      return `<div class="import-row"><div><strong>${escape(entry.note || directions[entry.direction])}</strong><small>${meta}</small></div>
+      return `<div class="import-row"><div><strong>${escape(entry.note || directions[direction])}</strong><small>${meta}</small>
+        ${duplicate ? '' : `<small class="import-category"${direction === 'transfer' ? ' hidden' : ''}>${escape(importCategoryLabel(categoryId))}</small>`}</div>
         ${duplicate ? '<span class="chip">重复</span>' : `<select class="control" aria-label="第 ${number} 行收支类型" data-import-row="${number}">
         ${directionsFor(direction).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
     }).join('')}</div>
@@ -943,7 +963,7 @@ function chooseSheet(name) {
   importState.error = ''
   try {
     importState.table = importState.file.table(name)
-    if (statementColumns(importState.table.headers)) importState.preview = importRows(importState.table, {})
+    if (statementColumns(importState.table.headers)) prepareImportPreview({})
     else importState.options = guessColumns(importState.table.headers)
   } catch (error) { importState.error = error.message }
   openImport()
@@ -962,7 +982,7 @@ function mappingSubmit(form) {
   importState.options = options
   importState.limit = 40
   importState.overrides.clear()
-  importState.preview = importRows(importState.table, options)
+  prepareImportPreview(options)
   openImport()
 }
 
@@ -976,13 +996,9 @@ async function confirmImport() {
   try {
     const rows = duplicatePreviews(importState.preview, state.entries).filter(row => row.entry && !row.duplicate)
     const createdAt = new Date().toISOString()
-    const entries = rows.map(({ number, entry }) => {
-      const direction = importState.overrides.get(number) ?? entry.direction
-      return withQuotes({
-        ...entry, direction, id: crypto.randomUUID(), createdAt,
-        categoryId: direction === entry.direction ? entry.categoryId : null
-      }, quotesFor(entry.at.slice(0, 10)))
-    })
+    const entries = rows.map(({ number, entry }) => withQuotes({
+      ...importEntryDraft(number, entry), id: crypto.randomUUID(), createdAt
+    }, quotesFor(entry.at.slice(0, 10))))
     const added = await addEntries(entries)
     dialog.close()
     await reload()
@@ -1304,7 +1320,18 @@ dialog.addEventListener('submit', async event => {
 dialog.addEventListener('change', event => {
   const control = event.target
   if (control.id === 'sheet') { chooseSheet(control.value); return }
-  if (control.dataset.importRow) { importState.overrides.set(Number(control.dataset.importRow), control.value); return }
+  if (control.dataset.importRow) {
+    const number = Number(control.dataset.importRow)
+    const { entry } = importState.preview.find(item => item.number === number)
+    importState.overrides.set(number, control.value)
+    const draft = importEntryDraft(number, entry)
+    const row = control.closest('.import-row')
+    const category = row.querySelector('.import-category')
+    category.hidden = draft.direction === 'transfer'
+    category.textContent = importCategoryLabel(draft.categoryId)
+    if (!entry.note) row.querySelector('strong').textContent = directions[draft.direction]
+    return
+  }
   const form = control.form
   if (form?.id === 'map-form') {
     form.dataset.dirty = 'true'

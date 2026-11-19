@@ -370,6 +370,7 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 .import-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line) }
 .import-row strong { display: block; font-weight: 500; overflow-wrap: anywhere }
 .import-row small { display: block; color: var(--muted); font-size: 12px }
+.import-row .import-category { margin-top: 2px; color: var(--ink-2); overflow-wrap: anywhere }
 .import-row select { max-width: 96px; min-height: 36px; font-size: 16px }
 
 /* Entry sheet */

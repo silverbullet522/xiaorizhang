@@ -138,22 +138,35 @@ const keywordCategories = [
 ]
 const sameNote = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')
 
-// Prefer the category last used for the same merchant, then a keyword match on the merchant or the whole screen.
-export function suggestCategory(draft, text, entries, categories) {
-  const usable = id => categories.some(item => item.id === id && item.direction === draft.direction)
-  const note = sameNote(draft.note)
-  if (note) {
-    const previous = entries.filter(entry => entry.direction === draft.direction && entry.categoryId && sameNote(entry.note) === note)
-      .reduce((latest, entry) => !latest || entry.at > latest.at ? entry : latest, null)
+// Index merchant history once so a file import can use the same rules for every row.
+export function createCategorySuggester(entries, categories) {
+  const available = new Map(categories.map(item => [item.id, item.direction]))
+  const latestByMerchant = new Map()
+  for (const entry of entries) {
+    if (!entry.categoryId) continue
+    const note = sameNote(entry.note)
+    if (!note) continue
+    const key = `${entry.direction}:${note}`
+    const latest = latestByMerchant.get(key)
+    if (!latest || entry.at > latest.at) latestByMerchant.set(key, entry)
+  }
+
+  return (draft, text) => {
+    const usable = id => available.get(id) === draft.direction
+    const previous = latestByMerchant.get(`${draft.direction}:${sameNote(draft.note)}`)
     if (previous && usable(previous.categoryId)) return previous.categoryId
+    if (draft.direction !== 'expense') return null
+    for (const source of [draft.note, String(text ?? '').slice(0, screenTextLimit).normalize('NFKC')]) {
+      if (!source) continue
+      const match = keywordCategories.find(([id, pattern]) => pattern.test(source) && usable(id))
+      if (match) return match[0]
+    }
+    return null
   }
-  if (draft.direction !== 'expense') return null
-  for (const source of [draft.note, String(text ?? '').slice(0, screenTextLimit).normalize('NFKC')]) {
-    if (!source) continue
-    const match = keywordCategories.find(([id, pattern]) => pattern.test(source) && usable(id))
-    if (match) return match[0]
-  }
-  return null
+}
+
+export function suggestCategory(draft, text, entries, categories) {
+  return createCategorySuggester(entries, categories)(draft, text)
 }
 
 const stamp = at => Date.parse(at + 'Z')

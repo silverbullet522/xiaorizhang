@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { likelyDuplicate, parseScreenText, suggestCategory } from '../dist/screen.mjs'
+import { createCategorySuggester, likelyDuplicate, parseScreenText, suggestCategory } from '../dist/screen.mjs'
 
 const categories = [
   { id: 'food', parentId: null, direction: 'expense' }, { id: 'food-1', parentId: 'food', direction: 'expense' },
@@ -18,6 +18,18 @@ test('同一商户沿用上次的分类，否则按商户关键词推测', () =>
   assert.equal(suggestCategory({ note: '', direction: 'expense' }, 'モバイルSuica\nチャージ ¥3,000', [], categories), 'travel-0')
   assert.equal(suggestCategory({ note: 'Blue Coffee', direction: 'income' }, '', [], categories), null)
   assert.equal(suggestCategory({ note: '某某商店', direction: 'expense' }, '', [], categories), null)
+})
+
+test('批量分类复用历史索引，按收支方向查找并识别全角商户关键词', () => {
+  const suggest = createCategorySuggester([
+    { note: '咖啡 店', direction: 'expense', categoryId: 'food-2', at: '2026-11-15T09:00:00' },
+    { note: '咖啡店', direction: 'income', categoryId: 'salary', at: '2026-11-17T09:00:00' },
+    { note: '咖啡店', direction: 'expense', categoryId: 'food-1', at: '2026-11-01T09:00:00' }
+  ], categories)
+  assert.equal(suggest({ note: '咖啡店', direction: 'expense' }, '咖啡店'), 'food-2')
+  assert.equal(suggest({ note: '咖啡店', direction: 'income' }, '咖啡店'), 'salary')
+  assert.equal(suggest({ note: 'Ｓｔａｒｂｕｃｋｓ', direction: 'expense' }, 'Ｓｔａｒｂｕｃｋｓ'), 'food-1')
+  assert.equal(suggest({ note: '未知商户', direction: 'expense' }, '未知商户'), null)
 })
 
 test('相同金额和时间相近的流水视为可能重复', () => {
