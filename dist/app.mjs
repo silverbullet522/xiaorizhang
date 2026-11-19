@@ -8,7 +8,6 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
-import { isIosApp, readClipboardText, shareIosFile } from './platform.mjs'
 import { allowsMotion, animateCategory, playMotion, readMeters, transitionMeters } from './motion.mjs'
 import { billCycles, billKey, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, nextFutureBillDate } from './features.mjs'
 import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
@@ -29,7 +28,7 @@ const state = {
   selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false, ledgerSearchOpen: false, ledgerCategoriesOpen: false, budgetExpanded: false
 }
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'], settings: ['设置', 'settings'] }
-const standalone = isIosApp || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
+const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
 const phone = standalone || matchMedia('(pointer: coarse)').matches
 let importState
 let hiddenAt = 0
@@ -38,7 +37,7 @@ let bulk
 let pendingBackup
 let noticeTimer
 let ratesTask
-let offlineReady = isIosApp || Boolean(navigator.serviceWorker?.controller)
+let offlineReady = Boolean(navigator.serviceWorker?.controller)
 
 function toast(message, success = false) {
   clearTimeout(noticeTimer)
@@ -835,7 +834,7 @@ function applyScreenText(text) {
 async function pasteFromScreen() {
   hidePaste()
   let text = ''
-  try { text = await readClipboardText() } catch { /* Denied, unsupported, or the paste prompt was dismissed. */ }
+  try { text = await navigator.clipboard.readText() } catch { /* Denied, unsupported, or the paste prompt was dismissed. */ }
   if (dialog.open) return
   if (text.trim()) applyScreenText(text)
   else showScreenInput(true)
@@ -855,9 +854,10 @@ function offerPaste() {
 
 async function readScreenClipboard() {
   const form = byId('screen-form')
+  if (!navigator.clipboard?.readText) return
   let text
   try {
-    text = await readClipboardText()
+    text = await navigator.clipboard.readText()
   } catch {
     // Safari also supports the system paste menu on the text area.
     return
@@ -1204,7 +1204,6 @@ async function exportBackup(range) {
 }
 
 async function shareOrDownload(file, title, message) {
-  if (isIosApp) return shareIosFile(file, title)
   if (navigator.canShare?.({ files: [file] })) {
     try { await navigator.share({ files: [file], title }); return true }
     catch (error) { if (error.name === 'AbortError') return false }
@@ -2055,7 +2054,7 @@ async function start() {
     await reload()
     offerPaste()
     refreshRates().catch(handleError)
-    if (!isIosApp && 'serviceWorker' in navigator) {
+    if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw.js').then(() => navigator.serviceWorker.ready).then(() => {
         offlineReady = true
         chrome()

@@ -36,12 +36,3 @@
 ## 开发
 
 应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析，分类图标来自 Lucide（ISC，见 `dist/vendor/LICENSE.lucide.txt`）。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。
-
-### iPhone 原生试用版
-
-试用版支持 iOS 16 及以上，安装包内置应用页面，首次打开即可离线记账。App 和主屏幕 Web App 使用各自的本地账本。迁移时在原版本的「设置 → 数据与备份」导出完整 JSON，再在试用版恢复。
-
-- **Mac**。安装 Node.js 24、pnpm 和 Xcode 26 或更新版本，在仓库根目录执行 `pnpm install --frozen-lockfile`、`pnpm ios:sync`、`pnpm ios:open`。在 Xcode 的「Signing & Capabilities」选自己的 Team，连接并选择 iPhone，然后点运行。iPhone 如有提示，在「设置 → 隐私与安全性」开启开发者模式。免费 Apple 账户用 Personal Team 签名，安装资格每七天到期，可用同一账号和 App 标识重新运行续签。[Apple 真机调试说明](https://help.apple.com/xcode/mac/current/en.lproj/dev5a825a1ca.html)
-- **Windows**。从 [Build iPhone trial](https://github.com/silverbullet522/xiaorizhang/actions/workflows/ios-trial.yml) 成功的构建中下载 `Xiaorizhang-iPhone-trial`，解压得到待签名的 `Xiaorizhang-trial.ipa`。可在 Windows 配置 AltStore Classic，将 IPA 传到 iPhone 的「文件」，再从 AltStore 的「My Apps」点 `+` 选择 IPA。免费账户每七天需要续签。[AltStore Windows 安装指南](https://faq.altstore.io/altstore-classic/how-to-install-altstore-windows)
-
-更新原生试用版时，Mac 上重新执行 `pnpm ios:sync` 后安装。Windows 可在 GitHub Actions 手动运行试用版工作流，下载新 IPA 后用同一个账号覆盖安装。
