@@ -4,7 +4,7 @@ import {
 } from './core.mjs'
 import {
   addEntries, backupDocument, completeRates, deleteEntries, deleteEntry, readLedger, restoreLedger,
-  saveCategory, saveCurrency, saveEntry, validateBackup
+  saveCategory, saveCurrency, saveEntries, saveEntry, validateBackup
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
@@ -21,7 +21,7 @@ const state = {
   entries: [], categories: [], currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
   statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0,
-  selecting: false, selected: new Set()
+  selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false
 }
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
@@ -29,6 +29,7 @@ const phone = standalone || matchMedia('(pointer: coarse)').matches
 let importState
 let hiddenAt = 0
 let pasteTimer
+let bulk
 let pendingBackup
 let noticeTimer
 let ratesTask
@@ -159,23 +160,75 @@ function overview() {
     <div class="ledger">${entries.length ? entries.slice(0, 5).map(item => transaction(item, state.categories, state.currency)).join('') : emptyLedger(Boolean(state.entries.length))}</div></section>`
 }
 
-function ledger() {
-  const range = state.ledgerDay ?? period()
-  const category = state.categories.find(item => item.id === state.ledgerCategory)
-  const filtered = state.entries.filter(entry => within(entry, range) &&
-    (state.ledgerDirection === 'all' || entry.direction === state.ledgerDirection) &&
-    (state.ledgerCategory === null || (state.ledgerCategory === '' ? !entry.categoryId
-      : entry.categoryId === state.ledgerCategory || state.categories.some(item => item.id === entry.categoryId && item.parentId === state.ledgerCategory))))
-  const restrictions = [state.ledgerDay && (range.start === range.end ? dayLabel(range.start) : `${range.start} ～ ${range.end}`),
-    state.ledgerCategory !== null && (category?.name ?? '未分类')].filter(Boolean)
-  return `<div class="page-heading"><div><h1>流水</h1><p>${filtered.length} 笔记录</p></div>${periodControls()}</div>
-    <div class="ledger-filter">
-    ${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
-    <div class="inline-actions">${filtered.length ? button('select-mode', state.selecting ? '完成' : '选择') : ''}
-    ${button('pick-import', '导入账单', '', 'upload')}</div></div>
-    ${restrictions.length ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除当前细分筛选">${escape(restrictions.join(' · '))} ×</button>` : ''}
+const searchText = value => String(value ?? '').normalize('NFKC').toLowerCase()
+const searching = () => Boolean(state.ledgerQuery.trim())
+
+function ledgerEntries() {
+  const terms = searchText(state.ledgerQuery).split(/\s+/).filter(Boolean)
+  const range = state.ledgerDay ?? (terms.length && state.searchAll ? null : period())
+  const lookup = new Map(state.categories.map(item => [item.id, item]))
+  return state.entries.filter(entry => {
+    if (range && !within(entry, range)) return false
+    if (state.ledgerDirection !== 'all' && entry.direction !== state.ledgerDirection) return false
+    const category = lookup.get(entry.categoryId)
+    if (state.ledgerCategory === '' ? entry.categoryId : state.ledgerCategory !== null &&
+      entry.categoryId !== state.ledgerCategory && category?.parentId !== state.ledgerCategory) return false
+    if (!terms.length) return true
+    // Every word must appear in the note, the category, or its parent category.
+    const text = searchText([entry.note, category?.name, lookup.get(category?.parentId)?.name].join(' '))
+    return terms.every(term => text.includes(term))
+  })
+}
+
+function categoryFilter() {
+  const selected = state.categories.find(item => item.id === state.ledgerCategory)
+  const root = selected?.parentId ? state.categories.find(item => item.id === selected.parentId) : selected
+  const rootValue = state.ledgerCategory === null ? '*' : state.ledgerCategory === '' ? '' : root?.id
+  const shown = state.ledgerDirection === 'all' ? ['expense', 'income'] : [state.ledgerDirection]
+  const roots = direction => topCategories(direction).map(item => option(item.id, item.name, rootValue)).join('')
+  const kids = root ? children(root.id) : []
+  return `<div class="category-filter">
+    <select class="control filter-select" data-filter="root" aria-label="一级分类">${option('*', '全部分类', rootValue)}
+      ${shown.length > 1 ? shown.map(direction => `<optgroup label="${directions[direction]}">${roots(direction)}</optgroup>`).join('') : roots(shown[0])}
+      ${option('', '未分类', rootValue)}</select>
+    ${kids.length ? `<select class="control filter-select" data-filter="child" aria-label="二级分类">
+      ${option(root.id, `全部${root.name}`, state.ledgerCategory)}${kids.map(item => option(item.id, item.name, state.ledgerCategory)).join('')}</select>` : ''}
+  </div>`
+}
+
+function ledgerResults() {
+  const filtered = ledgerEntries()
+  const sums = summarize(filtered, state.currency)
+  const wide = searching() && !state.ledgerDay
+  const scopeName = state.range ? '所选区间' : `${Number(state.month.slice(5))}月`
+  const parts = [`${wide && state.searchAll ? '全部时间 · ' : ''}${filtered.length} 笔`,
+    sums.expense && `支出 ${money(sums.expense, state.currency)}`, sums.income && `收入 ${money(sums.income, state.currency)}`].filter(Boolean)
+  return `<div class="result-head"><p>${parts.join(' · ')}
+      ${wide ? `<button type="button" class="plain" data-action="search-scope">${state.searchAll ? `只搜${scopeName}` : '搜索全部时间'}</button>` : ''}</p>
+    ${filtered.length || state.selecting ? `<button class="plain" type="button" data-action="select-mode">${state.selecting ? '完成' : '选择'}</button>` : ''}</div>
     <div class="day-stack">${dayCards(filtered)}</div>
     ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}`
+}
+
+function ledger() {
+  const day = state.ledgerDay
+  return `<div class="page-heading"><div><h1>流水</h1></div>${periodControls()}</div>
+    <div class="ledger-tools">
+      <label class="search-field">${icon('search', 17)}<span class="sr-only">搜索备注或分类</span>
+        <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="搜索备注或分类" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
+      <div class="ledger-filter">${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
+        ${categoryFilter()}</div>
+    </div>
+    ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除日期筛选">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
+    <div id="ledger-results">${ledgerResults()}</div>`
+}
+
+// Refresh only the list so the search box keeps focus and any IME composition in progress.
+function refreshLedgerResults() {
+  const results = byId('ledger-results')
+  if (!results) { render(); return }
+  results.innerHTML = ledgerResults()
+  syncSelection()
 }
 
 function categoryPage() {
@@ -194,7 +247,11 @@ function categoryPage() {
 function render() {
   chrome()
   main.innerHTML = ({ home, overview, ledger, categories: categoryPage })[state.view]()
-  // Only rows still on screen can stay selected, so a delete never reaches entries the person cannot see.
+  syncSelection()
+}
+
+// Only rows still on screen can stay selected, so a bulk action never reaches entries the person cannot see.
+function syncSelection() {
   const visible = new Set(pickRows().map(row => row.dataset.value))
   for (const id of state.selected) if (!visible.has(id)) state.selected.delete(id)
   selectionBar()
@@ -213,6 +270,7 @@ function selectionBar() {
   bar.innerHTML = `<button type="button" class="plain" data-action="select-mode">取消</button>
     <span class="select-count" aria-live="polite">已选 ${count} 笔</span>
     <button type="button" class="plain" data-action="select-all" ${rows.length ? '' : 'disabled'}>${all ? '全不选' : '全选'}</button>
+    <button type="button" class="button" data-action="bulk-category" ${count ? '' : 'disabled'}>${icon('tag', 16)}改分类</button>
     <button type="button" class="button danger" data-action="delete-selected" ${count ? '' : 'disabled'}>${icon('trash', 16)}删除</button>`
 }
 
@@ -221,16 +279,66 @@ function stopSelecting() {
   state.selected.clear()
 }
 
+// Categories belong to one direction, so a mixed selection changes one direction at a time.
+function openBulkCategory() {
+  const picked = state.entries.filter(entry => state.selected.has(entry.id))
+  const counts = { expense: 0, income: 0 }
+  for (const entry of picked) if (entry.direction in counts) counts[entry.direction] += 1
+  if (!counts.expense && !counts.income) { toast('转账没有分类，选中的流水无需修改。'); return }
+  bulk = { counts, others: picked.length - counts.expense - counts.income, direction: counts.expense >= counts.income ? 'expense' : 'income', categoryId: undefined }
+  renderBulkCategory()
+}
+
+function renderBulkCategory() {
+  const { counts, direction, categoryId } = bulk
+  const selected = state.categories.find(item => item.id === categoryId)
+  const rootId = selected?.parentId ?? selected?.id ?? (categoryId === null ? '' : undefined)
+  const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="bulk-pick" data-value="${item.id}">
+    ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
+  const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
+  const kids = selected ? children(rootId) : []
+  const unchanged = counts[direction === 'expense' ? 'income' : 'expense'] + bulk.others
+  const label = categoryId === undefined ? '选择分类' : `改为「${escape(selected?.name ?? '未分类')}」`
+  openDialog('修改分类', `<div class="form-grid bulk-category">
+    ${counts.expense && counts.income ? tabs('bulk-direction', { expense: `支出 ${counts.expense} 笔`, income: `收入 ${counts.income} 笔` }, direction) : ''}
+    <p class="fine">修改 ${counts[direction]} 笔${directions[direction]}的分类${unchanged ? `，其余 ${unchanged} 笔不变` : ''}。</p>
+    <div class="category-strip">${roots.map(item => pill(item, item.id === rootId)).join('')}</div>
+    ${kids.length ? `<div class="category-children">${kids.map(item => pill(item, item.id === categoryId)).join('')}</div>` : ''}
+    <div class="form-footer">${cancelButton}<button type="button" class="button primary" data-action="bulk-apply" ${categoryId === undefined ? 'disabled' : ''}>${label}</button></div>
+  </div>`)
+}
+
+async function applyBulkCategory(control) {
+  const { direction, categoryId } = bulk
+  if (categoryId === undefined) return
+  const targets = state.entries.filter(entry => state.selected.has(entry.id) && entry.direction === direction)
+  const name = state.categories.find(item => item.id === categoryId)?.name ?? '未分类'
+  control.disabled = true
+  await saveEntries(targets.filter(entry => entry.categoryId !== categoryId).map(entry => ({ ...entry, categoryId })))
+  dialog.close()
+  stopSelecting()
+  await reload()
+  toast(`已将 ${targets.length} 笔改为「${name}」`)
+}
+
 async function reload() {
   Object.assign(state, await readLedger())
   render()
 }
 
+// Changing the month or range drops a drilled-in day but keeps the search and category filter.
 function clearDrill() {
   state.ledgerDay = null
-  state.ledgerCategory = null
   state.ledgerLimit = 60
   state.trendPage = 0
+}
+
+function resetLedgerFilters() {
+  clearDrill()
+  state.ledgerCategory = null
+  state.ledgerDirection = 'all'
+  state.ledgerQuery = ''
+  state.searchAll = false
 }
 
 function go(view) {
@@ -719,8 +827,7 @@ async function confirmImport(control) {
       const oldest = entries.reduce((first, entry) => entry.at < first ? entry.at : first, mostRecent)
       state.month = importMonth
       state.range = oldest.slice(0, 7) === importMonth ? null : { start: oldest.slice(0, 10), end: mostRecent.slice(0, 10) }
-      clearDrill()
-      state.ledgerDirection = 'all'
+      resetLedgerFilters()
       go('ledger')
     }
     toast(`已导入 ${added} 笔流水`)
@@ -793,8 +900,7 @@ function pickFile(id) {
 
 const actions = {
   navigate: ({ value }) => {
-    clearDrill()
-    state.ledgerDirection = 'all'
+    resetLedgerFilters()
     go(value)
   },
   add: () => openEntry(),
@@ -856,17 +962,27 @@ const actions = {
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },
   'stats-direction': ({ value }) => { state.statsDirection = value; render() },
   'trend-page': ({ value }) => { state.trendPage = Number(value); render() },
-  'ledger-direction': ({ value }) => { state.ledgerDirection = value; state.ledgerLimit = 60; render() },
+  'ledger-direction': ({ value }) => {
+    state.ledgerDirection = value
+    const category = state.categories.find(item => item.id === state.ledgerCategory)
+    if (category && value !== 'all' && category.direction !== value) state.ledgerCategory = null
+    state.ledgerLimit = 60
+    render()
+  },
   'more-ledger': () => { state.ledgerLimit += 60; render() },
-  'clear-drill': () => { clearDrill(); render() },
+  'clear-drill': () => { state.ledgerDay = null; state.ledgerLimit = 60; render() },
+  'search-scope': () => { state.searchAll = !state.searchAll; state.ledgerLimit = 60; refreshLedgerResults() },
+  'bulk-category': openBulkCategory,
+  'bulk-direction': ({ value }) => { bulk.direction = value; bulk.categoryId = undefined; renderBulkCategory() },
+  'bulk-pick': ({ value }) => { bulk.categoryId = value || null; renderBulkCategory() },
+  'bulk-apply': (_, control) => applyBulkCategory(control),
   'drill-day': ({ start, end }) => {
-    clearDrill()
+    resetLedgerFilters()
     state.ledgerDay = { start, end }
-    state.ledgerDirection = 'all'
     go('ledger')
   },
   'drill-category': ({ value }) => {
-    clearDrill()
+    resetLedgerFilters()
     state.ledgerCategory = value
     state.ledgerDirection = state.statsDirection
     go('ledger')
@@ -906,7 +1022,7 @@ const actions = {
       pendingBackup = null
       dialog.close()
       await reload()
-      clearDrill()
+      resetLedgerFilters()
       if (state.entries.length) state.month = state.entries[0].at.slice(0, 7)
       state.range = null
       go('home')
@@ -1036,6 +1152,25 @@ document.addEventListener('visibilitychange', () => {
 })
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && state.selecting && !dialog.open) { stopSelecting(); render() }
+  // Search runs as you type; Enter just puts the phone keyboard away.
+  if (event.key === 'Enter' && event.target.id === 'ledger-search' && !event.isComposing) event.target.blur()
+})
+
+main.addEventListener('input', event => {
+  if (event.target.id !== 'ledger-search') return
+  state.ledgerQuery = event.target.value
+  state.ledgerLimit = 60
+  refreshLedgerResults()
+})
+
+main.addEventListener('change', event => {
+  const control = event.target
+  if (!control.dataset.filter) return
+  state.ledgerCategory = control.value === '*' ? null : control.value
+  const category = state.categories.find(item => item.id === state.ledgerCategory)
+  if (category && state.ledgerDirection !== 'all' && category.direction !== state.ledgerDirection) state.ledgerDirection = category.direction
+  state.ledgerLimit = 60
+  render()
 })
 document.addEventListener('pointerdown', event => {
   if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()

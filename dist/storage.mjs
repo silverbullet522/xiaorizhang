@@ -46,6 +46,10 @@ export function readLedger() {
 }
 
 export const saveEntry = entry => transact(['entries'], 'readwrite', store => store('entries').put(entry))
+export const saveEntries = list => transact(['entries'], 'readwrite', store => {
+  const entries = store('entries')
+  for (const entry of list) entries.put(entry)
+})
 export const deleteEntry = id => transact(['entries'], 'readwrite', store => store('entries').delete(id))
 // One transaction, so a failure leaves every selected entry in place.
 export const deleteEntries = ids => transact(['entries'], 'readwrite', store => {

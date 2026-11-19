@@ -15,6 +15,7 @@ const paths = {
   right: '<path d="m9 6 6 6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   erase: '<path d="M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9L3 12zM12 9l6 6m0-6-6 6"/>',
   trash: '<path d="M4 7h16m-10 4v5m4-5v5m-8-9 1 13h10l1-13m-8 0V4h4v3"/>',
@@ -164,7 +165,7 @@ export function transaction(entry, categories, reportCurrency, grouped = false, 
 export function emptyLedger(isFiltered) {
   return `<div class="empty"><span class="icon-tile">${icon('ledger', 21)}</span>
     <strong>${isFiltered ? '没有符合条件的流水' : '还没有流水'}</strong>
-    <p>${isFiltered ? '可调整日期或收支筛选。' : '手动记一笔，或导入已有账单。'}</p>
+    <p>${isFiltered ? '可调整日期、分类或搜索词。' : '手动记一笔，或导入已有账单。'}</p>
     ${isFiltered ? '' : `<div class="inline-actions">${button('add', '记一笔', '', 'plus', 'primary')}${button('pick-import', '导入账单', '', 'upload')}</div>`}
   </div>`
 }
