@@ -1,6 +1,10 @@
 import { createImportMatcher, currencies, dateTime, defaults, directions, planBackupRestore, presetRenames, restorePlanSignature, tokyoNow, withQuotes, within } from './core.mjs'
 import { iconNames } from './icons.mjs'
 import { billKey, findMerchantRule, firstUnpostedDate, merchantKey, nextBillDate, readFeatures, validFeature } from './features.mjs'
+import { sameLedger } from './sync-ledger.mjs'
+
+export const ledgerChanges = new EventTarget()
+const ledgerStores = ['entries', 'categories', 'settings']
 
 const database = new Promise((resolve, reject) => {
   const open = indexedDB.open('hiba-ledger', 1)
@@ -82,34 +86,75 @@ function syncPresets(store, settings) {
   }
 }
 
-async function transact(names, mode, run) {
+async function transact(names, mode, run, notify = true) {
   const db = await database
   return new Promise((resolve, reject) => {
     const tx = db.transaction(names, mode)
     const store = name => tx.objectStore(name)
     let result
-    tx.oncomplete = () => resolve(result)
+    tx.oncomplete = () => {
+      resolve(result)
+      if (notify && mode === 'readwrite' && names.some(name => ledgerStores.includes(name))) {
+        ledgerChanges.dispatchEvent(new Event('change'))
+      }
+    }
     tx.onabort = () => reject(tx.error ?? new Error('账本写入被中断。'))
     try { run(store, value => { result = value }) }
     catch (error) { tx.abort(); reject(error) }
   })
 }
 
-export function readLedger() {
-  return transact(['entries', 'categories', 'settings'], 'readonly', (store, done) => {
-    const entries = store('entries').getAll()
-    const categories = store('categories').getAll()
-    const currency = store('settings').get('currency')
-    const deletedPresets = store('settings').get('deletedPresets')
-    const features = store('settings').get('features')
-    features.onsuccess = () => done({
+function ledgerRequests(store, done, forSync = false) {
+  const settings = store('settings')
+  const entries = store('entries').getAll()
+  const categories = store('categories').getAll()
+  const currency = settings.get('currency')
+  const deletedPresets = settings.get('deletedPresets')
+  const sync = forSync ? settings.get('driveSync') : null
+  const reset = forSync ? settings.get('driveReset') : null
+  const features = settings.get('features')
+  features.onsuccess = () => {
+    const ledger = {
       entries: entries.result.sort((a, b) => b.at.localeCompare(a.at) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)),
       categories: categories.result,
       currency: currency.result ?? 'JPY',
       deletedPresets: deletedPresets.result ?? [],
       features: readFeatures(features.result, categoryDirections(categories.result))
-    })
-  })
+    }
+    done(forSync ? { ledger, sync: sync.result, reset: reset.result } : ledger)
+  }
+}
+
+export function readLedger() {
+  return transact(ledgerStores, 'readonly', ledgerRequests)
+}
+
+export function readDriveState() {
+  return transact(ledgerStores, 'readonly', (store, done) => ledgerRequests(store, done, true))
+}
+
+export function applyDriveState(expected, ledger, sync) {
+  return transact(ledgerStores, 'readwrite', (store, done) => ledgerRequests(store, current => {
+    if (current.sync?.revision !== expected.sync?.revision || current.reset !== expected.reset ||
+        !sameLedger(current.ledger, expected.ledger)) { done(null); return }
+    const settings = store('settings')
+    const changed = !sameLedger(ledger, current.ledger)
+    if (changed) {
+      const entries = store('entries')
+      const categories = store('categories')
+      entries.clear()
+      categories.clear()
+      ledger.entries.forEach(entry => entries.add(entry))
+      ledger.categories.forEach(category => categories.add(category))
+      settings.put(presetVersion, 'presets')
+      settings.put(ledger.currency, 'currency')
+      settings.put(ledger.deletedPresets, 'deletedPresets')
+      settings.put(ledger.features, 'features')
+    }
+    settings.put(sync, 'driveSync')
+    settings.delete('driveReset')
+    done({ changed })
+  }, true), false)
 }
 
 const categoryDirections = list => new Map(list.map(item => [item.id, item.direction]))
@@ -175,7 +220,11 @@ export function clearLedger() {
     const settings = store('settings')
     store('entries').clear()
     categories.clear()
-    settings.clear()
+    for (const key of ['presets', 'currency', 'deletedPresets', 'features']) settings.delete(key)
+    const linked = settings.get('driveSync')
+    linked.onsuccess = () => {
+      if (linked.result) settings.put(crypto.randomUUID(), 'driveReset')
+    }
     store('rates').clear()
     syncPresets(categories, settings)
   })

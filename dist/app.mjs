@@ -7,6 +7,9 @@ import {
   deleteFeature, postBill, saveCategory, saveCurrency, saveEntries, saveEntry, saveFeature, validateBackup
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
+import {
+  authorizeDrive, configureDrive, driveEvents, driveStatus, initializeDrive, pauseDrive, prepareGoogle, queueDriveSync, syncDriveNow
+} from './drive-sync.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { allowsMotion, animateCategory, playMotion, readMeters, transitionMeters } from './motion.mjs'
 import { billCycles, billKey, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, nextFutureBillDate } from './features.mjs'
@@ -1171,6 +1174,68 @@ async function removeFeature(form) {
   manageFeature(list)
 }
 
+const driveMessages = {
+  authorize: 'Google 授权已过期，请重新授权。',
+  authorizing: '等待 Google 授权…',
+  denied: 'Google 授权未完成，请重试。',
+  syncing: '正在同步账本…',
+  synced: '已同步',
+  paused: '已暂停同步，本机仍可记账。',
+  offline: '离线中，联网后会继续同步。',
+  error: '同步暂未完成，本机数据已保留。',
+  'google-unavailable': '暂时无法连接 Google，请重试。',
+  'wrong-account': '请选择原来同步的 Google 账号。',
+  'invalid-cloud': '云端账本无法读取，请保留本机备份。'
+}
+
+function driveSummary() {
+  const message = t(driveMessages[driveStatus.phase] ?? (driveStatus.clientId ? '等待连接 Google Drive' : '尚未连接 Google Drive'))
+  return driveStatus.phase === 'synced' && driveStatus.time
+    ? `${message} · ${driveStatus.time.toLocaleTimeString(language, { hour: '2-digit', minute: '2-digit' })}`
+    : message
+}
+
+function paintDriveSettings() {
+  const caption = byId('settings-drive-caption')
+  if (caption) caption.textContent = driveSummary()
+  const status = byId('drive-status')
+  if (!status) return
+  status.textContent = driveSummary()
+  byId('drive-account').textContent = driveStatus.email
+  const { authorized, clientId, phase, ready } = driveStatus
+  const busy = phase === 'authorizing' || phase === 'syncing'
+  const form = byId('drive-config-form')
+  form.hidden = driveStatus.linked
+  byId('drive-buttons').innerHTML = clientId
+    ? `${authorized || busy ? button('drive-pause', t('暂停同步')) : ''}
+      ${authorized ? button('drive-now', t('立即同步'), busy ? 'disabled' : '', '', 'primary')
+        : button('drive-authorize', t(ready ? '连接 Google Drive' : '加载 Google 授权'), busy ? 'disabled' : '', '', 'primary')}`
+    : ''
+}
+
+function openDriveSettings() {
+  openDialog(t('Google Drive 同步'), `<div class="form-grid">
+    <p class="fine">${t('流水、分类和账本设置先保存在本机，授权后也会同步到 Google Drive 的应用专用空间。')}</p>
+    <p class="fine"><span id="drive-account"></span><br><span id="drive-status" role="status"></span></p>
+    <form id="drive-config-form" class="form-grid">
+      ${field(t('Google OAuth 客户端 ID'), `<input name="client" required type="text" spellcheck="false" autocapitalize="none" autocomplete="off" value="${escape(driveStatus.clientId)}">`)}
+      <p class="fine"><a href="https://github.com/silverbullet522/xiaorizhang#google-drive-同步" target="_blank" rel="noopener">${t('客户端 ID 配置说明')}</a></p>
+      ${errorPlaceholder}<div class="form-footer">${submitButton(t('保存客户端 ID'))}</div>
+    </form>
+    <div id="drive-buttons" class="form-footer"></div>
+  </div>`)
+  paintDriveSettings()
+  prepareGoogle()
+}
+
+function submitDriveConfig(form) {
+  if (!configureDrive(form.elements.client.value)) {
+    formError(t('请输入以 .apps.googleusercontent.com 结尾的客户端 ID。'))
+    return
+  }
+  formError('')
+}
+
 function settingsPage() {
   const row = (action, glyph, label, extra = '') => `<button class="settings-row" type="button" data-action="${action}" ${extra}>
     ${icon(glyph, 18)}<span>${label}</span>${icon('right', 14)}</button>`
@@ -1187,9 +1252,10 @@ function settingsPage() {
         `<p class="settings-note" id="settings-offline">${offlineDescription()}</p>
         ${standalone ? '' : `<p class="settings-note">${t('在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。')}</p>`}`)}
       ${group(t('数据与备份'),
+        row('drive-settings', 'upload', t('Google Drive 同步')) +
         row('export-backup', 'download', t('导出完整备份')) + row('export-backup-range', 'calendar', t('按日期导出')) +
         row('export-csv', 'download', t('按日期导出 CSV')) + row('pick-backup', 'upload', t('恢复备份')),
-        `<p class="settings-note">${t('账本保存在当前设备。完整备份包含流水、分类和汇总币种。')}</p>`)}
+        `<p class="settings-note" id="settings-drive-caption">${driveSummary()}</p>`)}
       ${group(t('数据管理'), row('delete-entry-range', 'calendar', t('按日期删除流水')))}
       <div class="settings-rows settings-destructive">${row('clear-ledger', 'trash', t('清除所有数据'))}</div>
     </div>`
@@ -1280,6 +1346,7 @@ async function submitDataRange(form) {
 function openClearLedger() {
   openDialog(t('清除所有数据'), `<form id="clear-ledger-form" class="form-grid">
     <p>${t('将清除本机账本的 {0} 笔流水、自定义分类、分类修改和设置。', `<strong>${state.entries.length}</strong>`)}</p>
+    ${driveStatus.linked ? `<p class="fine">${t('下次同步时，也会清除 Google Drive 中的同步账本。')}</p>` : ''}
     <p class="fine">${t('清除后会恢复预设分类和默认汇总币种。此操作无法撤销。')}</p>
     ${errorPlaceholder}<div class="form-footer">${cancelButton()}<button class="button danger" type="submit">${t('确认清除')}</button></div>
   </form>`)
@@ -1744,6 +1811,10 @@ const actions = {
   },
   'confirm-import': () => confirmImport(),
   'export-backup': () => exportBackup(),
+  'drive-settings': openDriveSettings,
+  'drive-authorize': authorizeDrive,
+  'drive-pause': pauseDrive,
+  'drive-now': syncDriveNow,
   'export-backup-range': () => openDataRange('export'),
   'export-csv': () => openDataRange('csv'),
   'manage-feature': ({ value }) => manageFeature(value),
@@ -1828,6 +1899,7 @@ document.addEventListener('click', event => {
 })
 
 const forms = {
+  'drive-config-form': submitDriveConfig,
   'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
   'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger, 'feature-form': submitFeature,
   'screen-form': form => applyScreenText(form.elements.screenText.value)
@@ -1978,6 +2050,7 @@ byId('file-backup').addEventListener('change', async event => {
 
 function updateConnectivity() {
   chrome()
+  syncDriveNow()
   if (navigator.onLine) refreshRates().catch(handleError)
 }
 window.addEventListener('online', updateConnectivity)
@@ -1986,6 +2059,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); hidePaste(); return }
   // Coming back from another app usually means a shortcut just copied a payment screen.
   if (Date.now() - hiddenAt > 1500) offerPaste()
+  queueDriveSync(0)
   reload().then(() => refreshRates()).catch(handleError)
 })
 document.addEventListener('keydown', event => {
@@ -2034,6 +2108,18 @@ setInterval(() => {
   if (!document.hidden && navigator.onLine) refreshRates().catch(handleError)
 }, 5 * 60 * 1000)
 
+driveEvents.addEventListener('status', paintDriveSettings)
+driveEvents.addEventListener('ledger', () => {
+  const search = byId('ledger-search')
+  if (search && document.activeElement === search && state.view === 'home') {
+    readLedger().then(ledger => {
+      Object.assign(state, ledger)
+      if (byId('ledger-results')) refreshLedgerResults()
+    }).catch(handleError)
+  } else reload().catch(handleError)
+})
+setInterval(() => { if (!document.hidden) syncDriveNow() }, 60000)
+
 function applyLanguage() {
   document.documentElement.lang = language
   document.title = t('小日账')
@@ -2052,6 +2138,7 @@ async function start() {
   applyLanguage()
   try {
     await reload()
+    initializeDrive().catch(handleError)
     offerPaste()
     refreshRates().catch(handleError)
     if ('serviceWorker' in navigator) {

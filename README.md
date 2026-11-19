@@ -33,6 +33,18 @@
 
 在「设置 → 数据管理」可以按日期删除流水或清除所有数据。按日期操作可快捷选择整月，也可手动指定起止日，包含东京时间的起止两天。清除所有数据会恢复预设分类和默认设置。
 
+### Google Drive 同步
+
+在「设置 → 数据与备份 → Google Drive 同步」输入 Google OAuth 网页客户端 ID，保存后连接 Google 账号。流水、分类、汇总币种、预算、固定账单和商户规则会同步到 Google Drive 的应用专用空间。你可以在设置里查看同步状态、立即同步或暂停同步。每台设备使用同一个客户端 ID 和 Google 账号。
+
+1. 在 [Google Cloud Console](https://console.cloud.google.com/) 创建项目并启用 [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)。
+2. 在 Google Auth Platform 配置应用和受众。使用「外部」且处于测试阶段时，将自己的 Google 账号加入测试用户。在「数据访问权限」选用 `https://www.googleapis.com/auth/drive.appdata`。
+3. 创建「网页应用」类型的 OAuth 客户端，在「已获授权的 JavaScript 来源」添加 `https://silverbullet522.github.io`。在本地测试时，另外添加实际使用的本地来源，例如 `http://localhost:8765`。将以 `.apps.googleusercontent.com` 结尾的客户端 ID 填入小日账。[Google OAuth 设置文档](https://developers.google.com/identity/oauth2/web/guides/get-google-api-clientid)
+
+记账时先写入本机。在页面打开且授权有效时，应用会自动上传更改并定期检查云端更新。离线时可以继续记录，重新联网后补传。浏览器会话结束或授权过期后，重新点「连接 Google Drive」继续。同步使用 [Drive 应用数据文件夹](https://developers.google.com/workspace/drive/api/guides/appdata)，云端副本可以通过小日账读取。
+
+同一笔流水在多台设备上被修改时，保留同步版本较新的修改。分类和账本设置作为一组同步。连接过同步的账本执行「清除所有数据」后，下次同步也会清除云端账本。
+
 ## 开发
 
 应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析，分类图标来自 Lucide（ISC，见 `dist/vendor/LICENSE.lucide.txt`）。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。
