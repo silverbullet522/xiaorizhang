@@ -49,7 +49,8 @@ function formError(message) {
 
 function period() { return state.range ?? monthBounds(state.month) }
 const byName = (a, b) => a.name.localeCompare(b.name, 'zh-CN')
-const parentOrder = ['food', 'travel', 'shopping', 'home', 'fun', 'health', 'salary', 'extra']
+const parentOrder = ['food', 'travel', 'shopping', 'home', 'living', 'comm', 'fun', 'health', 'beauty', 'learn',
+  'social', 'family', 'pet', 'car', 'misc', 'salary', 'extra', 'invest']
 const priority = item => parentOrder.includes(item.id) ? parentOrder.indexOf(item.id) : parentOrder.length
 const topCategories = direction => state.categories.filter(item => item.direction === direction && item.parentId === null)
   .sort((a, b) => priority(a) - priority(b) || byName(a, b))
@@ -296,14 +297,18 @@ function renderBulkCategory() {
   const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="bulk-pick" data-value="${item.id}">
     ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
-  const kids = selected ? children(rootId) : []
+  const root = selected && state.categories.find(item => item.id === rootId)
   const unchanged = counts[direction === 'expense' ? 'income' : 'expense'] + bulk.others
   const label = categoryId === undefined ? '选择分类' : `改为「${escape(selected?.name ?? '未分类')}」`
-  openDialog('修改分类', `<div class="form-grid bulk-category">
+  openDialog('修改分类', `<div class="form-grid bulk-category category-picker" data-direction="${direction}">
     ${counts.expense && counts.income ? tabs('bulk-direction', { expense: `支出 ${counts.expense} 笔`, income: `收入 ${counts.income} 笔` }, direction) : ''}
     <p class="fine">修改 ${counts[direction]} 笔${directions[direction]}的分类${unchanged ? `，其余 ${unchanged} 笔不变` : ''}。</p>
-    <div class="category-strip">${roots.map(item => pill(item, item.id === rootId)).join('')}</div>
-    ${kids.length ? `<div class="category-children">${kids.map(item => pill(item, item.id === categoryId)).join('')}</div>` : ''}
+    <div class="category-strip">${roots.map(item => pill(item, item.id === rootId)).join('')}
+      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
+      <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button></div>
+    ${root ? `<div class="category-children">${children(root.id).map(item => pill(item, item.id === categoryId)).join('')}
+      <button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(root.id)}" aria-label="在${escape(root.name)}下新增二级分类">${icon('plus', 14)}<span>添加</span></button></div>` : ''}
+    ${categoryAdder}
     <div class="form-footer">${cancelButton}<button type="button" class="button primary" data-action="bulk-apply" ${categoryId === undefined ? 'disabled' : ''}>${label}</button></div>
   </div>`)
 }
@@ -416,29 +421,40 @@ function selectCategories(form, selectedId = '') {
   section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
 }
 
-function openCategoryAdder(form, parentId) {
+// The entry sheet and the bulk category dialog share one inline "add category" field.
+const categoryAdder = `<div class="category-adder" hidden>
+  <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="新分类名称">
+  <button type="button" class="button" data-action="category-add-cancel">取消</button>
+  <button type="button" class="button primary" data-action="category-add-save">添加</button>
+  <span class="category-adder-error" role="alert"></span>
+</div>`
+const pickerDirection = picker => picker.dataset.direction ?? picker.closest('form').elements.direction.value
+
+function openCategoryAdder(picker, parentId) {
   const parent = state.categories.find(item => item.id === parentId)
-  const adder = form.querySelector('.category-adder')
+  const adder = picker.querySelector('.category-adder')
   const input = adder.querySelector('input')
   adder.dataset.parent = parent?.id ?? ''
   adder.querySelector('.category-adder-error').textContent = ''
   input.value = ''
-  input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[form.elements.direction.value]}一级分类`
+  input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[pickerDirection(picker)]}一级分类`
   adder.hidden = false
   input.focus()
 }
 
-// Adds the category without leaving the entry sheet, then selects it so the draft keeps going.
-async function saveInlineCategory(form) {
-  const adder = form.querySelector('.category-adder')
+// Adds the category without leaving the sheet, then selects it so the draft or bulk change keeps going.
+async function saveInlineCategory(picker) {
+  const adder = picker.querySelector('.category-adder')
   if (adder.dataset.saving) return
   const parent = state.categories.find(item => item.id === adder.dataset.parent)
+  const form = picker.closest('#entry-form')
   adder.dataset.saving = 'true'
   try {
-    const result = await addCategory(parent?.id ?? null, parent?.direction ?? form.elements.direction.value, adder.querySelector('input').value)
+    const result = await addCategory(parent?.id ?? null, parent?.direction ?? pickerDirection(picker), adder.querySelector('input').value)
     if (result.error) { adder.querySelector('.category-adder-error').textContent = result.error; return }
     await reload()
-    if (byId('entry-form') === form) selectCategories(form, result.id)
+    if (form && byId('entry-form') === form) selectCategories(form, result.id)
+    else if (!form && bulk && dialog.contains(picker)) { bulk.categoryId = result.id; renderBulkCategory() }
     toast('分类已添加')
   } finally { delete adder.dataset.saving }
 }
@@ -495,17 +511,12 @@ function openEntry(id, screen) {
       <label class="entry-currency"><span class="sr-only">币种</span><select class="control" name="currency" required>${choices}</select></label>
     </div>
     <div class="fx" id="fx-preview" aria-live="polite"></div>
-    <section class="entry-categories" aria-label="选择分类">
+    <section class="entry-categories category-picker" aria-label="选择分类">
       <input type="hidden" name="category">
       <div class="entry-category-heading"><h3>分类</h3><span class="entry-category-name"></span></div>
       <div class="category-strip" aria-label="一级分类"></div>
       <div class="category-children" aria-label="二级分类"></div>
-      <div class="category-adder" hidden>
-        <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="新分类名称">
-        <button type="button" class="button" data-action="category-add-cancel">取消</button>
-        <button type="button" class="button primary" data-action="category-add-save">添加</button>
-        <span class="category-adder-error" role="alert"></span>
-      </div>
+      ${categoryAdder}
     </section></div>
     <div class="entry-footer">
     <div class="entry-note">
@@ -744,8 +755,11 @@ function importPreview() {
   if (!importState.preview) return ''
   const rows = duplicatePreviews(importState.preview, state.entries)
   const counts = { ready: rows.filter(row => row.entry && !row.duplicate).length, invalid: rows.filter(row => row.error).length, duplicate: rows.filter(row => row.duplicate).length }
-  return `<section class="import-preview"><div class="import-counts">
+  // Offered above and below the rows so a long preview never needs scrolling just to import.
+  const confirm = button('confirm-import', `导入 ${counts.ready} 笔有效流水`, counts.ready ? '' : 'disabled', '', 'primary')
+  return `<section class="import-preview"><div class="import-top"><div class="import-counts">
     <span class="chip">待导入 ${counts.ready}</span><span class="chip">重复 ${counts.duplicate}</span><span class="chip">有问题 ${counts.invalid}</span></div>
+    ${rows.length ? confirm : ''}</div>
     <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, error }) => {
       if (!entry) return `<div class="import-row"><span>第 ${number} 行</span><span class="form-error">${escape(error)}</span></div>`
       const direction = importState.overrides.get(number) ?? entry.direction
@@ -756,7 +770,7 @@ function importPreview() {
     }).join('')}</div>
     ${!rows.length ? '<p class="fine">这张表只有表头。</p>' : ''}
     <div class="form-footer">${rows.length > importState.limit ? button('more-import', '显示更多', '', '', 'leading') : ''}
-    ${button('confirm-import', `导入 ${counts.ready} 笔有效流水`, counts.ready ? '' : 'disabled', '', 'primary')}</div></section>`
+    ${confirm}</div></section>`
 }
 
 function openImport() {
@@ -803,10 +817,13 @@ function mappingSubmit(form) {
   openImport()
 }
 
-async function confirmImport(control) {
+async function confirmImport() {
   // Recompute from the current mapping so a changed select never imports an old preview.
   if (byId('map-form')?.dataset.dirty) { formError('列映射已更改，请重新预览。'); return }
-  control.disabled = true
+  if (importState.saving) return
+  importState.saving = true
+  const controls = [...dialog.querySelectorAll('[data-action="confirm-import"]')]
+  controls.forEach(item => { item.disabled = true })
   try {
     const rows = duplicatePreviews(importState.preview, state.entries).filter(row => row.entry && !row.duplicate)
     const createdAt = new Date().toISOString()
@@ -832,7 +849,10 @@ async function confirmImport(control) {
     }
     toast(`已导入 ${added} 笔流水`)
     await refreshRates()
-  } finally { control.disabled = false }
+  } finally {
+    importState.saving = false
+    controls.forEach(item => { item.disabled = false })
+  }
 }
 
 async function submitEntry(form, control) {
@@ -956,9 +976,9 @@ const actions = {
     toast(`已删除 ${ids.length} 笔流水`)
   },
   'category-new': ({ value }) => createCategory(value),
-  'category-add': ({ value }) => openCategoryAdder(byId('entry-form'), value),
-  'category-add-cancel': () => { byId('entry-form').querySelector('.category-adder').hidden = true },
-  'category-add-save': () => saveInlineCategory(byId('entry-form')),
+  'category-add': ({ value }, control) => openCategoryAdder(control.closest('.category-picker'), value),
+  'category-add-cancel': (_, control) => { control.closest('.category-adder').hidden = true },
+  'category-add-save': (_, control) => saveInlineCategory(control.closest('.category-picker')),
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },
   'stats-direction': ({ value }) => { state.statsDirection = value; render() },
   'trend-page': ({ value }) => { state.trendPage = Number(value); render() },
@@ -1011,7 +1031,7 @@ const actions = {
     openImport()
     dialog.scrollTop = position
   },
-  'confirm-import': (_, control) => confirmImport(control),
+  'confirm-import': () => confirmImport(),
   backup: openBackup,
   'export-backup': exportBackup,
   'pick-backup': () => pickFile('file-backup'),
@@ -1090,7 +1110,7 @@ dialog.addEventListener('keydown', event => {
   if (event.key !== 'Enter' || !event.target.matches('.category-adder input')) return
   // Enter must not submit the entry; while an IME is composing it only confirms the text.
   event.preventDefault()
-  if (!event.isComposing && event.keyCode !== 229) saveInlineCategory(event.target.form).catch(handleError)
+  if (!event.isComposing && event.keyCode !== 229) saveInlineCategory(event.target.closest('.category-picker')).catch(handleError)
 })
 
 // The date chip shows its own text over an invisible native input; mouse users need the picker opened for them.

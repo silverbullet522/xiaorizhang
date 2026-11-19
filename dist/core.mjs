@@ -10,15 +10,26 @@ export function tokyoNow(now = new Date()) {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`
 }
 
+// Child ids come from their position, so new children are only ever appended to keep saved entries pointing at the same category.
 const seeds = [
-  ['food', '餐饮', 'expense', 'coffee', ['正餐', '咖啡饮品', '食材零食']],
-  ['travel', '交通', 'expense', 'train', ['公共交通', '打车', '机票']],
-  ['shopping', '购物', 'expense', 'bag', ['服饰', '日用品', '数码']],
-  ['home', '住房', 'expense', 'home', ['房租', '水电网费']],
-  ['fun', '休闲', 'expense', 'sparkle', ['娱乐', '旅行']],
-  ['health', '医疗健康', 'expense', 'heart', ['医疗', '运动']],
-  ['salary', '工资', 'income', 'wallet', ['基本工资', '奖金']],
-  ['extra', '其他收入', 'income', 'gift', ['副业', '礼金']]
+  ['food', '餐饮', 'expense', 'coffee', ['正餐', '咖啡饮品', '食材零食', '外卖', '蔬菜水果', '烟酒']],
+  ['travel', '交通', 'expense', 'train', ['公共交通', '打车', '机票', '火车']],
+  ['shopping', '购物', 'expense', 'bag', ['服饰', '日用品', '数码', '鞋包']],
+  ['home', '住房', 'expense', 'home', ['房租', '水电网费', '物业管理', '房贷']],
+  ['fun', '休闲', 'expense', 'sparkle', ['娱乐', '旅行', '游戏', '电影演出', '兴趣收藏', '彩票']],
+  ['health', '医疗健康', 'expense', 'heart', ['医疗', '运动', '药品', '体检']],
+  ['living', '居家', 'expense', 'sofa', ['家具', '家电', '清洁', '维修']],
+  ['comm', '通讯', 'expense', 'phone', ['话费', '订阅会员', '快递']],
+  ['beauty', '美容', 'expense', 'scissors', ['美发', '美甲', '护肤彩妆', '按摩']],
+  ['learn', '学习办公', 'expense', 'book', ['书籍', '课程', '考试', '办公用品']],
+  ['social', '人情社交', 'expense', 'chat', ['聚会', '礼物', '礼金红包', '捐赠']],
+  ['family', '家庭', 'expense', 'family', ['孩子', '长辈', '亲友']],
+  ['pet', '宠物', 'expense', 'paw', ['宠物食品', '宠物用品', '宠物医疗']],
+  ['car', '汽车', 'expense', 'car', ['加油充电', '停车', '保养维修', '车险']],
+  ['misc', '其他支出', 'expense', 'more', ['保险', '税费', '手续费', '杂项']],
+  ['salary', '工资', 'income', 'wallet', ['基本工资', '奖金', '加班', '补贴']],
+  ['extra', '其他收入', 'income', 'gift', ['副业', '礼金', '红包', '退款', '报销', '二手转卖']],
+  ['invest', '理财', 'income', 'chart', ['利息', '分红', '投资收益']]
 ]
 
 export const defaults = seeds.flatMap(([id, name, direction, icon, children]) => [

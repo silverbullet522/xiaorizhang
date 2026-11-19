@@ -99,9 +99,13 @@ function screenTimestamp(lines) {
 
 // Default subcategory ids paired with merchant keywords; the first match wins.
 const keywordCategories = [
-  ['food-1', /咖啡|coffee|caf[eé]|カフェ|珈琲|コーヒー|スターバックス|starbucks|ドトール|タリーズ|瑞幸|luckin|奶茶|喜茶|蜜雪/iu],
+  ['comm-1', /anthropic|claude|openai|chatgpt|netflix|spotify|youtube premium|apple\.com\/bill|icloud|amazon prime/iu],
+  ['food-3', /rocket ?now|出前館|\bwolt\b|uber ?eats|美团外卖|饿了么/iu],
+  ['fun-4', /プレミアム\s*バンダイ|premium bandai|駿河屋|アニメイト|まんだらけ/iu],
+  ['learn-0', /ブックオフ|bookoff|紀伊國屋|丸善|ジュンク堂|书店|書店/iu],
+  ['food-1',/咖啡|coffee|caf[eé]|カフェ|珈琲|コーヒー|スターバックス|starbucks|ドトール|タリーズ|瑞幸|luckin|奶茶|喜茶|蜜雪/iu],
   ['food-2', /コンビニ|セブン-?イレブン|7-?eleven|ローソン|lawson|ファミリーマート|ファミマ|familymart|全家|罗森|便利店|超市|スーパー|イオン|\baeon\b|西友|まいばすけっと|盒马|永辉/iu],
-  ['food-0', /餐厅|饭店|食堂|レストラン|ラーメン|寿司|居酒屋|焼肉|牛丼|吉野家|すき家|松屋|マクドナルド|mcdonald|麦当劳|肯德基|\bkfc\b|美团外卖|饿了么|uber ?eats|restaurant/iu],
+  ['food-0', /餐厅|饭店|食堂|レストラン|ラーメン|麺屋|からあげ|寿司|居酒屋|焼肉|牛丼|吉野家|すき家|松屋|マクドナルド|mcdonald|麦当劳|肯德基|\bkfc\b|restaurant/iu],
   ['travel-1', /タクシー|\btaxi\b|出租车|滴滴|\bdidi\b|\buber\b(?! ?eats)/iu],
   ['travel-2', /航空|机票|airlines?|ジェットスター/iu],
   ['travel-0', /suica|pasmo|icoca|\bjr\b|地下鉄|メトロ|\bmetro\b|地铁|公交|巴士|バス|鉄道|railway|新幹線|12306/iu],
@@ -110,7 +114,9 @@ const keywordCategories = [
   ['shopping-2', /ビックカメラ|ヨドバシ|bic ?camera|yodobashi|京东|数码/iu],
   ['home-1', /電気料金|电费|ガス料金|燃气|水道|水费|宽带/iu],
   ['health-0', /病院|クリニック|医院|诊所|薬局|药店|药房|pharmacy|clinic|hospital/iu],
-  ['fun-0', /映画|电影|cinema|netflix|spotify|steam|nintendo|カラオケ|\bktv\b/iu]
+  ['fun-3', /映画|电影|cinema|劇場|ライブ|コンサート/iu],
+  ['fun-2', /steam|nintendo|playstation|ゲーム/iu],
+  ['fun-0', /カラオケ|\bktv\b/iu]
 ]
 const sameNote = value => String(value ?? '').normalize('NFKC').toLowerCase().replace(/\s+/g, '')
 

@@ -14,10 +14,45 @@ const database = new Promise((resolve, reject) => {
   open.onsuccess = () => {
     const db = open.result
     db.onversionchange = () => db.close()
-    resolve(db)
+    addMissingDefaults(db).then(() => resolve(db))
   }
   open.onerror = () => reject(open.error)
 })
+
+// Ledgers created before the preset list grew get the new presets. Existing categories are never changed,
+// and a preset is skipped when the same name is already used at that level.
+function addMissingDefaults(db) {
+  return new Promise(resolve => {
+    const tx = db.transaction('categories', 'readwrite')
+    const store = tx.objectStore('categories')
+    const request = store.getAll()
+    request.onsuccess = () => {
+      const existing = request.result
+      const ids = new Set(existing.map(item => item.id))
+      const key = item => JSON.stringify([item.direction, item.parentId, item.name])
+      const taken = new Set(existing.map(key))
+      const parents = new Map(existing.filter(item => item.parentId === null).map(item => [item.id, item]))
+      const parentFor = new Map()
+      for (const item of defaults) {
+        if (item.parentId === null) {
+          const match = ids.has(item.id) ? parents.get(item.id) : existing.find(other => other.parentId === null && key(other) === key(item))
+          if (match) { parentFor.set(item.id, match); continue }
+          store.add(item)
+          parentFor.set(item.id, item)
+          taken.add(key(item))
+          continue
+        }
+        const parent = parentFor.get(item.parentId)
+        const child = { ...item, parentId: parent?.id, icon: parent?.icon }
+        if (!parent || ids.has(item.id) || taken.has(key(child))) continue
+        store.add(child)
+        taken.add(key(child))
+      }
+    }
+    // A failed top-up must never keep the ledger from opening.
+    tx.oncomplete = tx.onabort = () => resolve()
+  })
+}
 
 async function transact(names, mode, run) {
   const db = await database
