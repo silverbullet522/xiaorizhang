@@ -376,13 +376,9 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--brand) }
 .import-row .import-category { margin-top: 2px; color: var(--ink-2); overflow-wrap: anywhere }
 .import-row select { max-width: 96px; min-height: 36px; font-size: 16px }
 
-/* Budgets, recurring bills and month comparison */
+/* Budgets and recurring bills */
 .feature-panel { margin-block: 14px }
 .book-digest > .feature-panel { margin-bottom: 0 }
-.feature-panel h3 { margin: 12px 0 4px; font-size: 13.5px }
-.feature-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 8px }
-.feature-metrics dt { color: var(--muted); font-size: 12px; overflow-wrap: anywhere }
-.feature-metrics dd { font-weight: 650; overflow-wrap: anywhere }
 .feature-row {
   display: flex; width: 100%; min-height: 44px; gap: 8px; align-items: center; padding: 9px 0;
   border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); text-align: left;

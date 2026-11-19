@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { csvRows, duplicatePreviews, importRows } from '../dist/core.mjs'
-import { billKey, budgetUsage, findMerchantRule, firstUnpostedDate, ledgerCsv, monthlyComparison, nextBillDate } from '../dist/features.mjs'
+import { billKey, budgetUsage, findMerchantRule, firstUnpostedDate, ledgerCsv, nextBillDate } from '../dist/features.mjs'
 
 test('PayPay 以交易明细区分同号付款和多笔退款，并可匹配旧流水', () => {
   const [headers, ...data] = csvRows([
@@ -32,13 +32,9 @@ test('商户别名接收全角和门店后缀，分类仍要符合收支方向',
   assert.equal(findMerchantRule([rule], 'Rocket Now', categories, 'income').categoryId, null)
 })
 
-test('月末的同期对比对齐短月，预算按币种汇总子分类和待换算笔数', () => {
+test('预算按币种汇总子分类和待换算笔数', () => {
   const entries = [expense('2026-02-28T23:30:00', 800, 3800), expense('2026-03-03T10:00:00', 1000, 4800),
     expense('2026-03-31T10:00:00', 400, null), { ...expense('2026-03-31T11:00:00', 10000, 50000), direction: 'income' }]
-  const comparison = monthlyComparison(entries, categories, '2026-03-31', 'JPY')
-  assert.equal(comparison.previous.end, '2026-02-28')
-  assert.deepEqual(comparison.totals, [1400, 800])
-  assert.deepEqual(comparison.growth, [{ id: 'food', current: 1400, previous: 800, delta: 600 }])
   const [budget] = budgetUsage(entries, categories, [{ id: 'b1', categoryId: 'food', currency: 'CNY', minor: 5000 }], '2026-03')
   assert.deepEqual([budget.spent, budget.pending, budget.remaining], [4800, 1, 200])
 })

@@ -8,7 +8,7 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
-import { billCycles, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, monthlyComparison } from './features.mjs'
+import { billCycles, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv } from './features.mjs'
 import { categoryName, directionLabel, formatDate, initializeLanguage, language, languageOptions, saveLanguage, t } from './i18n.mjs'
 import { iconAliases, iconChoices, iconNames } from './icons.mjs'
 import { createCategorySuggester, likelyDuplicate, parseScreenText, screenTextLimit, suggestCategory } from './screen.mjs'
@@ -166,7 +166,6 @@ function overview() {
   const counts = { expense: entries.filter(entry => entry.direction === 'expense').length, income: entries.filter(entry => entry.direction === 'income').length }
   return `<div class="page-heading"><div><h1>${t('报表')}</h1></div>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
-    ${comparisonPanel()}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
     <section class="panel"><div class="panel-head"><h2>${t('近期流水')}</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">${t('查看全部')}</button></div>
     <div class="ledger">${entries.length ? entries.slice(0, 5).map(item => transaction(item, state.categories, state.currency)).join('') : emptyLedger(Boolean(state.entries.length))}</div></section>`
@@ -871,26 +870,6 @@ const featureTitles = { merchants: '商户规则', budgets: '分类预算', bill
 const cycleLabels = { weekly: '每周', monthly: '每月', yearly: '每年' }
 const todayTokyo = () => tokyoNow().slice(0, 10)
 
-function comparisonPanel() {
-  const stats = monthlyComparison(state.entries, state.categories, todayTokyo(), state.currency)
-  const [current, previous] = stats.totals
-  const amount = value => money(value, state.currency)
-  const signed = value => (value > 0 ? '+' : '') + amount(value)
-  const rangeLabel = ({ start, end }) => start === end ? dayLabel(start) : t('{0} 至 {1}', formatDate(start, 'short'), formatDate(end, 'short'))
-  const rows = stats.growth.slice(0, 5).map(item => `<button class="feature-row" type="button" data-action="compare-drill"
-    data-value="${escape(item.id)}" data-start="${stats.current.start}" data-end="${stats.current.end}">
-    <span><strong>${escape(importCategoryLabel(item.id))}</strong><small>${amount(item.previous)} → ${amount(item.current)}</small></span>
-    <strong>${signed(item.delta)}</strong>${icon('right', 15)}</button>`).join('')
-  return `<section class="panel feature-panel"><div class="panel-head"><h2>${t('月度对比')}</h2></div>
-    <dl class="feature-metrics"><div><dt>${t('本月至今')} · ${rangeLabel(stats.current)}</dt><dd>${amount(current)}</dd></div>
-    <div><dt>${t('上月同期')} · ${rangeLabel(stats.previous)}</dt><dd>${amount(previous)}</dd></div>
-    <div><dt>${t('支出差额')}</dt><dd>${signed(current - previous)}</dd></div></dl>
-    ${stats.pending ? `<p class="fine">${t('{0} 笔待换算', stats.pending)}</p>` : ''}
-    <h3>${t('支出增长最多的分类')}</h3>
-    ${rows || `<p class="fine">${t('暂无支出增长的分类。')}</p>`}
-  </section>`
-}
-
 function budgetPanel() {
   if (!state.features.budgets.length) return ''
   const budgets = budgetUsage(state.entries, state.categories, state.features.budgets, state.month)
@@ -1571,15 +1550,6 @@ const actions = {
   'review-bill': ({ value, due }) => {
     const occurrence = dueBills().find(item => item.bill.id === value && item.due === due)
     if (occurrence) openEntry(null, null, occurrence)
-  },
-  'compare-drill': ({ value, start, end }) => {
-    resetLedgerFilters()
-    state.month = start.slice(0, 7)
-    state.range = { start, end }
-    state.ledgerDay = { start, end }
-    state.ledgerCategory = value
-    state.ledgerDirection = 'expense'
-    go('home', true)
   },
   'delete-entry-range': () => openDataRange('delete'),
   'clear-ledger': openClearLedger,

@@ -1,4 +1,4 @@
-import { currencies, dateTime, monthBounds, offsetDate, within } from './core.mjs'
+import { currencies, dateTime, monthBounds, offsetDate } from './core.mjs'
 
 export const emptyFeatures = () => ({ merchants: [], budgets: [], bills: [] })
 export const billCycles = ['weekly', 'monthly', 'yearly']
@@ -80,34 +80,6 @@ export function firstUnpostedDate(bill, keys) {
   let date = bill.next
   while (date && keys.has(billKey(bill.id, date))) date = nextBillDate(bill, date)
   return date
-}
-
-export function monthlyComparison(entries, categories, today, currency) {
-  const start = today.slice(0, 7) + '-01'
-  const priorEnd = offsetDate(start, -1)
-  const priorStart = priorEnd.slice(0, 7) + '-01'
-  const current = { start, end: today }
-  const previous = { start: priorStart, end: priorEnd.slice(0, 8) + (today.slice(8) < priorEnd.slice(8) ? today.slice(8) : priorEnd.slice(8)) }
-  const byCategory = new Map(categories.map(item => [item.id, item]))
-  const totals = [0, 0]
-  const byGroup = new Map()
-  let pending = 0
-  for (const entry of entries) {
-    if (entry.direction !== 'expense') continue
-    const index = within(entry, current) ? 0 : within(entry, previous) ? 1 : -1
-    if (index === -1) continue
-    const amount = entry[currency === 'CNY' ? 'yuan' : 'yen']
-    if (amount == null) { pending++; continue }
-    const category = byCategory.get(entry.categoryId)
-    const id = category?.parentId ?? category?.id ?? ''
-    const stats = byGroup.get(id) ?? [0, 0]
-    stats[index] += amount
-    byGroup.set(id, stats)
-    totals[index] += amount
-  }
-  const growth = [...byGroup].map(([id, [current, previous]]) => ({ id, current, previous, delta: current - previous }))
-    .filter(item => item.delta > 0).sort((a, b) => b.delta - a.delta || a.id.localeCompare(b.id))
-  return { current, previous, totals, pending, growth }
 }
 
 export function budgetUsage(entries, categories, budgets, month) {
