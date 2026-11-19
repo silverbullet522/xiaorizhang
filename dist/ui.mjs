@@ -14,6 +14,7 @@ const paths = {
   left: '<path d="m15 6-6 6 6 6"/>',
   right: '<path d="m9 6 6 6-6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
   erase: '<path d="M9 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9L3 12zM12 9l6 6m0-6-6 6"/>',
   trash: '<path d="M4 7h16m-10 4v5m4-5v5m-8-9 1 13h10l1-13m-8 0V4h4v3"/>',
@@ -136,7 +137,8 @@ export function breakdown(entries, categories, direction, currency) {
     ${rows ? `<div class="category-stats">${rows}</div>` : `<div class="category-fallback"><div class="empty-ring">${icon('tag', 24)}</div><span>此期间暂无${directions[direction]}分类数据</span></div>`}</section>`
 }
 
-export function transaction(entry, categories, reportCurrency, grouped = false) {
+// `picked` is undefined outside selection mode, otherwise whether this row is selected.
+export function transaction(entry, categories, reportCurrency, grouped = false, picked) {
   const category = categories.find(item => item.id === entry.categoryId)
   const parent = categories.find(item => item.id === category?.parentId)
   const selected = entry.direction === 'transfer' ? '转账' : category?.name
@@ -151,7 +153,9 @@ export function transaction(entry, categories, reportCurrency, grouped = false) 
   const note = entry.currency !== reportCurrency || showConverted
     ? `<small>${entry.currency}${showConverted ? ` · ${converted == null ? '待换算' : `约 ${money(converted, reportCurrency)}`}` : ''}</small>`
     : ''
-  return `<button type="button" class="transaction" data-action="edit" data-value="${escape(entry.id)}">
+  const picking = picked !== undefined
+  return `<button type="button" class="transaction${picking ? ' picking' : ''}" data-action="${picking ? 'toggle-select' : 'edit'}" data-value="${escape(entry.id)}"${picking ? ` aria-pressed="${picked}"` : ''}>
+    ${picking ? `<span class="pick-mark" aria-hidden="true">${icon('check', 14)}</span>` : ''}
     ${categoryArt(category?.icon ?? (entry.direction === 'transfer' ? 'transfer' : 'tag'))}
     <span class="txn-body"><strong class="txn-title">${escape(title)}</strong><span class="txn-meta">${escape(detail)}</span></span>
     <span class="txn-value ${entry.direction === 'income' ? 'benefit' : entry.direction === 'transfer' ? 'transfer' : ''}">${({ income: '+', expense: '−', transfer: '' })[entry.direction]}${money(entry.minor, entry.currency)}${note}</span></button>`

@@ -3,7 +3,7 @@ import {
   summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
-  addEntries, backupDocument, completeRates, deleteEntry, readLedger, restoreLedger,
+  addEntries, backupDocument, completeRates, deleteEntries, deleteEntry, readLedger, restoreLedger,
   saveCategory, saveCurrency, saveEntry, validateBackup
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
@@ -20,7 +20,8 @@ const dialog = byId('dialog')
 const state = {
   entries: [], categories: [], currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
-  statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0
+  statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0,
+  selecting: false, selected: new Set()
 }
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
@@ -106,7 +107,8 @@ function dayCards(entries) {
         <h3 aria-label="${dayLabel(day)}"><time datetime="${day}">${month}月${date}日</time><span>${label}</span></h3>
         <p>${totals.map(text => `<span>${text}</span>`).join('')}</p>
       </header>
-      <div class="day-rows">${group.slice(0, remaining).map(entry => transaction(entry, state.categories, state.currency, true)).join('')}</div>
+      <div class="day-rows">${group.slice(0, remaining).map(entry => transaction(entry, state.categories, state.currency, true,
+        state.selecting ? state.selected.has(entry.id) : undefined)).join('')}</div>
     </article>`)
     remaining -= group.length
   }
@@ -136,7 +138,9 @@ function home() {
         ${pendingBanner(totals.pending)}
       </div>
       <section class="book-activity">
-        <div class="activity-head"><h2>流水</h2><button class="plain" type="button" data-action="navigate" data-value="ledger">筛选</button></div>
+        <div class="activity-head"><h2>流水</h2><div class="inline-actions">
+          ${entries.length ? `<button class="plain" type="button" data-action="select-mode">${state.selecting ? '完成' : '选择'}</button>` : ''}
+          <button class="plain" type="button" data-action="navigate" data-value="ledger">筛选</button></div></div>
         <div class="day-stack">${dayCards(entries)}</div>
         ${entries.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}
       </section>
@@ -167,7 +171,8 @@ function ledger() {
   return `<div class="page-heading"><div><h1>流水</h1><p>${filtered.length} 笔记录</p></div>${periodControls()}</div>
     <div class="ledger-filter">
     ${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
-    ${button('pick-import', '导入账单', '', 'upload')}</div>
+    <div class="inline-actions">${filtered.length ? button('select-mode', state.selecting ? '完成' : '选择') : ''}
+    ${button('pick-import', '导入账单', '', 'upload')}</div></div>
     ${restrictions.length ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除当前细分筛选">${escape(restrictions.join(' · '))} ×</button>` : ''}
     <div class="day-stack">${dayCards(filtered)}</div>
     ${filtered.length > state.ledgerLimit ? button('more-ledger', '显示更多') : ''}`
@@ -189,6 +194,31 @@ function categoryPage() {
 function render() {
   chrome()
   main.innerHTML = ({ home, overview, ledger, categories: categoryPage })[state.view]()
+  // Only rows still on screen can stay selected, so a delete never reaches entries the person cannot see.
+  const visible = new Set(pickRows().map(row => row.dataset.value))
+  for (const id of state.selected) if (!visible.has(id)) state.selected.delete(id)
+  selectionBar()
+}
+
+const pickRows = () => [...main.querySelectorAll('[data-action="toggle-select"]')]
+
+function selectionBar() {
+  const bar = byId('select-bar')
+  bar.hidden = !state.selecting
+  document.body.classList.toggle('selecting', state.selecting)
+  if (!state.selecting) return
+  const rows = pickRows()
+  const count = state.selected.size
+  const all = rows.length > 0 && rows.every(row => state.selected.has(row.dataset.value))
+  bar.innerHTML = `<button type="button" class="plain" data-action="select-mode">取消</button>
+    <span class="select-count" aria-live="polite">已选 ${count} 笔</span>
+    <button type="button" class="plain" data-action="select-all" ${rows.length ? '' : 'disabled'}>${all ? '全不选' : '全选'}</button>
+    <button type="button" class="button danger" data-action="delete-selected" ${count ? '' : 'disabled'}>${icon('trash', 16)}删除</button>`
+}
+
+function stopSelecting() {
+  state.selecting = false
+  state.selected.clear()
 }
 
 async function reload() {
@@ -205,6 +235,7 @@ function clearDrill() {
 
 function go(view) {
   state.view = view
+  stopSelecting()
   render()
   main.focus({ preventScroll: true })
   window.scrollTo(0, 0)
@@ -487,7 +518,7 @@ function hidePaste() {
 }
 
 function offerPaste() {
-  if (!phone || dialog.open) return
+  if (!phone || dialog.open || state.selecting) return
   byId('quick-paste').hidden = false
   clearTimeout(pasteTimer)
   pasteTimer = setTimeout(hidePaste, 12000)
@@ -787,6 +818,37 @@ const actions = {
     await reload()
     toast('流水已删除')
   },
+  'select-mode': () => {
+    const starting = !state.selecting
+    stopSelecting()
+    state.selecting = starting
+    hidePaste()
+    render()
+  },
+  'toggle-select': ({ value }, control) => {
+    if (!state.selected.delete(value)) state.selected.add(value)
+    control.setAttribute('aria-pressed', String(state.selected.has(value)))
+    selectionBar()
+  },
+  'select-all': () => {
+    const rows = pickRows()
+    const all = rows.every(row => state.selected.has(row.dataset.value))
+    for (const row of rows) {
+      if (all) state.selected.delete(row.dataset.value)
+      else state.selected.add(row.dataset.value)
+      row.setAttribute('aria-pressed', String(!all))
+    }
+    selectionBar()
+  },
+  'delete-selected': async (_, control) => {
+    const ids = [...state.selected]
+    if (!ids.length || !confirm(`删除选中的 ${ids.length} 笔流水？删除后无法恢复。`)) return
+    control.disabled = true
+    await deleteEntries(ids)
+    stopSelecting()
+    await reload()
+    toast(`已删除 ${ids.length} 笔流水`)
+  },
   'category-new': ({ value }) => createCategory(value),
   'category-add': ({ value }) => openCategoryAdder(byId('entry-form'), value),
   'category-add-cancel': () => { byId('entry-form').querySelector('.category-adder').hidden = true },
@@ -971,6 +1033,9 @@ document.addEventListener('visibilitychange', () => {
   // Coming back from another app usually means a shortcut just copied a payment screen.
   if (Date.now() - hiddenAt > 1500) offerPaste()
   reload().then(() => refreshRates()).catch(handleError)
+})
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && state.selecting && !dialog.open) { stopSelecting(); render() }
 })
 document.addEventListener('pointerdown', event => {
   if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()
