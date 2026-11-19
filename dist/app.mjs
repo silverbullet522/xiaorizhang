@@ -24,7 +24,7 @@ const state = {
   entries: [], categories: [], features: emptyFeatures(), currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
   statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0,
-  selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false, ledgerSearchOpen: false, ledgerCategoriesOpen: false
+  selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false, ledgerSearchOpen: false, ledgerCategoriesOpen: false, budgetExpanded: false
 }
 const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'], settings: ['设置', 'settings'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
@@ -138,8 +138,9 @@ function home() {
     <div class="book-layout">
       <div class="book-digest">
         <section class="digest" aria-label="${t('收支摘要')}">
-          <div class="digest-today"><h2>${t('今日支出')}</h2><strong>${money(daily.expense, state.currency)}</strong>
+          <div class="digest-today"><div><h2>${t('今日支出')}</h2>
             ${daily.pending ? `<small>${t('{0} 笔待换算', daily.pending)}</small>` : ''}</div>
+            <strong>${money(daily.expense, state.currency)}</strong></div>
           <dl class="digest-stats">
             <div><dt>${periodLabels[0]}</dt><dd>${money(totals.expense, state.currency)}</dd></div>
             <div><dt>${periodLabels[1]}</dt><dd>${money(totals.income, state.currency)}</dd></div>
@@ -164,7 +165,7 @@ function overview() {
   const entries = state.entries.filter(entry => within(entry, range))
   const totals = summarize(entries, state.currency)
   const counts = { expense: entries.filter(entry => entry.direction === 'expense').length, income: entries.filter(entry => entry.direction === 'income').length }
-  return `<div class="page-heading"><div><h1>${t('报表')}</h1></div>${periodControls()}</div>
+  return `<div class="page-heading report-heading"><h1>${t('报表')}</h1>${periodControls()}</div>
     ${summaryCards(totals, state.currency, counts)}${pendingBanner(totals.pending)}
     <div class="dashboard-grid">${trend(totals, range, state.currency, state.trendPage)}${breakdown(entries, state.categories, state.statsDirection, state.currency)}</div>
     <section class="panel"><div class="panel-head"><h2>${t('近期流水')}</h2><button class="plain" type="button" data-action="navigate" data-value="home" data-focus="ledger">${t('查看全部')}</button></div>
@@ -882,27 +883,41 @@ const featureItems = list => featureStore(list) === 'budgets'
 function budgetPanel() {
   if (!state.features.budgets.length) return ''
   const budgets = budgetUsage(state.entries, state.categories, state.features.budgets, state.month)
-  return budgetSection('total', budgets.filter(item => item.categoryId === null)) +
-    budgetSection('budgets', budgets.filter(item => item.categoryId !== null))
+  const totals = budgets.filter(item => item.categoryId === null)
+  const categories = budgets.filter(item => item.categoryId !== null)
+  const control = totals.length ? button('manage-feature', t('管理'), 'data-value="total"', '', 'budget-action subtle')
+    : button('edit-feature', t('设置'), 'data-list="total"', '', 'budget-action subtle')
+  return `<section class="home-budget" aria-labelledby="home-budget-title">
+    <div class="home-budget-head"><div class="home-budget-title"><h2 id="home-budget-title">${t('总预算')}</h2>
+      ${state.range ? `<small>${formatDate(state.month, 'month')}</small>` : ''}</div>${control}</div>
+    ${totals.length ? budgetRows(totals) : ''}
+    ${categories.length ? `<details id="category-budget-details" class="budget-details"${state.budgetExpanded ? ' open' : ''}>
+      <summary class="budget-disclosure"><span>${t('分类预算')}</span>${icon('down', 16)}</summary>
+      <div class="category-budget-body">
+        ${budgetRows(categories, true)}
+        ${button('manage-feature', t('管理'), 'data-value="budgets"', '', 'budget-action subtle')}
+      </div>
+    </details>` : ''}
+  </section>`
 }
 
-function budgetSection(list, budgets) {
-  if (!budgets.length && list !== 'total') return ''
-  const title = t(featureTitles[list])
-  const control = budgets.length ? button('manage-feature', t('管理'), `data-value="${list}"`, '', 'subtle')
-    : button('edit-feature', t('设置'), 'data-list="total"', '', 'subtle')
-  return `<section class="panel feature-panel"><div class="panel-head"><div><h2>${title}</h2>
-    <p>${formatDate(state.month, 'month')}</p></div>${control}</div>
-    ${budgets.length ? `<ul class="feature-list">${budgets.map(budget => {
-      const amount = value => money(value, budget.currency)
-      const label = list === 'total' ? title : importCategoryLabel(budget.categoryId)
-      return `<li><div class="feature-amount"><strong>${escape(list === 'total' ? budget.currency : label)}</strong>
-        <span>${amount(budget.minor)}${list === 'total' ? '' : ` ${budget.currency}`}</span></div>
-        <progress aria-label="${escape(label + ' · ' + budget.currency)}" max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
-        <small>${t('已用 {0}', amount(budget.spent))} · ${budget.remaining < 0
-          ? t('超出 {0}', amount(-budget.remaining)) : t('剩余 {0}', amount(budget.remaining))}
-          ${budget.pending ? ` · ${t('{0} 笔待换算', budget.pending)}` : ''}</small></li>`
-    }).join('')}</ul>` : ''}</section>`
+function budgetRows(budgets, categorized = false) {
+  return `<ul class="feature-list">${budgets.map(budget => {
+    const amount = value => money(value, budget.currency)
+    const label = categorized ? importCategoryLabel(budget.categoryId) : budget.currency
+    const over = budget.remaining < 0
+    const status = over ? t('超出 {0}', amount(-budget.remaining)) : t('剩余 {0}', amount(budget.remaining))
+    return `<li class="budget-line${over ? ' over-budget' : ''}">
+      ${categorized ? `<div class="budget-category">${escape(label)} <small>${budget.currency}</small></div>` : ''}
+      <div class="budget-line-values">
+        <span>${categorized ? '' : `<b>${budget.currency}</b> `}${t('已用 {0}', amount(budget.spent))}<span class="budget-limit"> / ${amount(budget.minor)}</span></span>
+        <strong>${status}</strong>
+      </div>
+      <progress aria-label="${escape((categorized ? label : t('总预算')) + ' · ' + budget.currency + ' ' + amount(budget.minor))}"
+        max="${budget.minor}" value="${Math.min(budget.spent, budget.minor)}"></progress>
+      ${budget.pending ? `<small>${t('{0} 笔待换算', budget.pending)}</small>` : ''}
+    </li>`
+  }).join('')}</ul>`
 }
 
 function dueBills() {
@@ -912,15 +927,30 @@ function dueBills() {
     .filter(item => item.due && item.due <= today).sort((a, b) => a.due.localeCompare(b.due))
 }
 
+const billControl = ({ bill, due }) => `data-value="${escape(bill.id)}" data-due="${due}"`
+
 function billsPanel() {
   const due = dueBills()
   if (!due.length) return ''
-  return `<section class="panel feature-panel"><div class="panel-head"><h2>${t('待确认的固定账单')}</h2>
-    ${button('manage-feature', t('管理'), 'data-value="bills"', '', 'subtle')}</div>
-    ${due.map(({ bill, due }) => `<div class="feature-row"><span><strong>${escape(bill.name)}</strong>
-      <small>${dayLabel(due)} · ${money(bill.minor, bill.currency)} ${bill.currency}</small></span>
-      ${button('review-bill', t('确认入账'), `data-value="${escape(bill.id)}" data-due="${due}"`, '', 'subtle')}</div>`).join('')}
-  </section>`
+  const single = due.length === 1 ? due[0] : null
+  const summary = t('{0} 笔待确认', due.length)
+  const amount = single ? money(single.bill.minor, single.bill.currency) +
+    (single.bill.currency === state.currency ? '' : ` ${single.bill.currency}`) : ''
+  return `<button class="due-reminder" type="button" data-action="${single ? 'review-bill' : 'review-due-bills'}" ${single ? billControl(single) : ''}>
+    ${icon('calendar', 17)}<span>${t('固定账单')}</span><small>${summary}${amount ? ' · ' + amount : ''}</small>${icon('right', 15)}
+  </button>`
+}
+
+function openDueBills() {
+  const due = dueBills()
+  if (!due.length) return
+  openDialog(t('待确认的固定账单'), `<div class="form-grid"><div>${due.map(occurrence => {
+    const { bill, due } = occurrence
+    return `<button type="button" class="feature-row" data-action="review-bill" ${billControl(occurrence)}>
+      <span><strong>${escape(bill.name)}</strong><small>${dayLabel(due)} · ${money(bill.minor, bill.currency)} ${bill.currency}</small></span>
+      ${icon('right', 15)}</button>`
+  }).join('')}</div>
+  <div class="form-footer">${button('manage-feature', t('管理'), 'data-value="bills"')}</div></div>`)
 }
 
 function manageFeature(list) {
@@ -1076,32 +1106,26 @@ async function removeFeature(form) {
 }
 
 function settingsPage() {
-  const row = (action, glyph, label) => `<button class="settings-row" type="button" data-action="${action}">
-    ${icon(glyph, 19)}<span>${label}</span>${icon('right', 15)}</button>`
-  return `<div class="page-heading"><h1>${t('设置')}</h1></div>
+  const row = (action, glyph, label, extra = '') => `<button class="settings-row" type="button" data-action="${action}" ${extra}>
+    ${icon(glyph, 18)}<span>${label}</span>${icon('right', 14)}</button>`
+  const group = (title, rows, caption = '') => `<section class="settings-group"><h2>${title}</h2>
+    <div class="settings-rows">${rows}</div>${caption}</section>`
+  const featureIcons = { total: 'chart', budgets: 'tag', bills: 'calendar', merchants: 'shopping-bag' }
+  return `<div class="page-heading settings-heading"><h1>${t('设置')}</h1></div>
     <div class="settings-grid">
-      <section class="panel settings-panel"><h2 id="language-heading">${t('语言')}</h2>
-        <select id="app-language" class="control" aria-labelledby="language-heading">${Object.entries(languageOptions).map(([code, name]) =>
-          `<option value="${code}" lang="${code}"${code === language ? ' selected' : ''}>${name}</option>`).join('')}</select>
-      </section>
-      <section class="panel settings-panel"><h2>${t('数据与备份')}</h2>
-        <p class="fine">${t('账本保存在当前设备。完整备份包含流水、分类和汇总币种。')}</p>
-        <div class="settings-rows">${row('export-backup', 'download', t('导出完整备份'))}${row('export-backup-range', 'calendar', t('按日期导出'))}${row('export-csv', 'download', t('按日期导出 CSV'))}${row('pick-backup', 'upload', t('恢复备份'))}</div>
-      </section>
-      <section class="panel settings-panel"><h2>${t('数据管理')}</h2>
-        <div class="settings-rows">${row('delete-entry-range', 'calendar', t('按日期删除流水'))}${row('clear-ledger', 'trash', t('清除所有数据'))}</div>
-      </section>
-      <section class="panel settings-panel"><h2>${t('记账设置')}</h2>
-        <div class="settings-rows">${Object.entries(featureTitles).map(([list, title]) => `<button class="settings-row" type="button" data-action="manage-feature" data-value="${list}">
-          ${icon(({ merchants: 'tag', total: 'chart', budgets: 'chart', bills: 'calendar' })[list], 19)}<span>${t(title)}</span>${icon('right', 15)}</button>`).join('')}</div>
-      </section>
-      <section class="panel settings-panel"><h2>${t('屏幕记账')}</h2>
-        <div class="settings-rows">${row('screen-guide', 'scan', t('配置屏幕记账'))}</div>
-      </section>
-      <section class="panel settings-panel"><h2>${t('应用与离线')}</h2>
-        <p class="fine" id="settings-offline">${offlineDescription()}</p>
-        ${standalone ? '' : `<p class="fine">${t('在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。')}</p>`}
-      </section>
+      ${group(t('常用设置'), `<label class="settings-row settings-language">${icon('settings', 18)}<span>${t('语言')}</span>
+        <select id="app-language" aria-label="${t('语言')}">${Object.entries(languageOptions).map(([code, name]) => option(code, name, language)
+          .replace('<option ', `<option lang="${code}" `)).join('')}</select></label>` +
+        Object.entries(featureIcons).map(([list, glyph]) => row('manage-feature', glyph, t(featureTitles[list]), `data-value="${list}"`)).join(''))}
+      ${group(t('应用与离线'), row('screen-guide', 'scan', t('配置屏幕记账')),
+        `<p class="settings-note" id="settings-offline">${offlineDescription()}</p>
+        ${standalone ? '' : `<p class="settings-note">${t('在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。')}</p>`}`)}
+      ${group(t('数据与备份'),
+        row('export-backup', 'download', t('导出完整备份')) + row('export-backup-range', 'calendar', t('按日期导出')) +
+        row('export-csv', 'download', t('按日期导出 CSV')) + row('pick-backup', 'upload', t('恢复备份')),
+        `<p class="settings-note">${t('账本保存在当前设备。完整备份包含流水、分类和汇总币种。')}</p>`)}
+      ${group(t('数据管理'), row('delete-entry-range', 'calendar', t('按日期删除流水')))}
+      <div class="settings-rows settings-destructive">${row('clear-ledger', 'trash', t('清除所有数据'))}</div>
     </div>`
 }
 
@@ -1653,6 +1677,7 @@ const actions = {
     }
   },
   'bill-from-entry': ({ value }) => billFromEntry(value),
+  'review-due-bills': openDueBills,
   'review-bill': ({ value, due }) => {
     const occurrence = dueBills().find(item => item.bill.id === value && item.due === due)
     if (occurrence) openEntry(null, null, occurrence)
@@ -1879,6 +1904,10 @@ document.addEventListener('keydown', event => {
   // Search runs as you type; Enter just puts the phone keyboard away.
   if (event.key === 'Enter' && event.target.id === 'ledger-search') event.target.blur()
 })
+
+main.addEventListener('toggle', event => {
+  if (event.target.id === 'category-budget-details') state.budgetExpanded = event.target.open
+}, true)
 
 main.addEventListener('change', event => {
   const control = event.target

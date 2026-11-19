@@ -50,21 +50,21 @@ export function periodDisplay(range, month) {
     : formatDate(month, 'month')
   return `<div class="period">
     <button data-action="month-prev" type="button" aria-label="${t('上个月')}">${icon('left', 15)}</button>
-    <button data-action="period" type="button" aria-label="${t('选择日期范围')}">${icon('calendar', 16)}<span>${selected}</span></button>
+    <button data-action="period" type="button" aria-label="${t('选择日期范围')}" aria-describedby="period-value">${icon('calendar', 16)}<span id="period-value">${selected}</span></button>
     <button data-action="month-next" type="button" aria-label="${t('下个月')}">${icon('right', 15)}</button>
   </div>`
 }
 
 export function summaryCards(summary, currency, counts) {
   const items = [
-    ['net', t('净收支'), summary.net, t('收入 − 支出')],
+    ['net', t('净收支'), summary.net],
     ['expense', t('总支出'), summary.expense, t('{0} 笔支出', counts.expense)],
     ['income', t('总收入'), summary.income, t('{0} 笔收入', counts.income)]
   ]
   return `<section class="stat-board" aria-label="${t('收支汇总')}">${items.map(([cls, label, amount, caption]) => `<div class="stat-cell ${cls}">
     <span class="stat-label">${label}</span>
     <strong class="stat-value">${money(amount, currency)}</strong>
-    <span class="stat-note">${caption}</span>
+    ${caption ? `<span class="stat-note">${caption}</span>` : ''}
   </div>`).join('')}</section>`
 }
 
@@ -80,10 +80,11 @@ export function trend(summary, range, currency, offset) {
   })
   let peak = 0
   for (const sums of summary.days.values()) peak = Math.max(peak, sums.income, sums.expense)
-  const unit = peak > 0 ? 10 ** Math.floor(Math.log10(peak)) : 1
-  const top = peak ? Math.ceil(peak / unit) * unit : currency === 'JPY' ? 3000 : 30000
-  const compact = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: 1 })
-  const tick = int => compact.format(Math.ceil(int / (currency === 'JPY' ? 1 : 100)))
+  const unit = peak > 0 ? 10 ** Math.max(0, Math.floor(Math.log10(peak / 3))) : 1
+  const step = peak ? Math.ceil(peak / (3 * unit)) * unit : currency === 'JPY' ? 1000 : 10000
+  const top = step * 3
+  const compact = new Intl.NumberFormat(language, { notation: 'compact', maximumFractionDigits: currency === 'JPY' ? 1 : 2 })
+  const tick = int => compact.format(int / (currency === 'JPY' ? 1 : 100))
   const date = day => formatDate(day, 'short')
   return `<section class="panel">
     <div class="panel-head"><div><h2>${t('收支走势')}</h2><p>${t('按日统计')}</p></div>
@@ -92,7 +93,7 @@ export function trend(summary, range, currency, offset) {
       ${icoButton('trend-page', 'right', t('下一段日期'), `data-value="${page + 1}" ${from + days === count ? 'disabled' : ''}`)}
       </div>` : ''}</div>
     <div class="legend"><span><i></i>${t('收入')}</span><span><i class="cost"></i>${t('支出')}</span></div>
-    <div class="chart-shell"><div class="chart-ticks" aria-hidden="true">${[1, 2/3, 1/3, 0].map(n => `<span>${tick(top * n)}</span>`).join('')}</div>
+    <div class="chart-shell"><div class="chart-ticks" aria-hidden="true">${[3, 2, 1, 0].map(n => `<span>${tick(step * n)}</span>`).join('')}</div>
     <div class="chart">${series.map(bin => {
       const label = t('{0} 收入 {1}，支出 {2}', bin.day, money(bin.income, currency), money(bin.expense, currency))
       return `<button type="button" class="chart-day" data-action="drill-day" data-start="${bin.day}" data-end="${bin.day}" aria-label="${label}" title="${label}" ${bin.income || bin.expense ? '' : 'disabled'}>
@@ -117,9 +118,11 @@ export function breakdown(entries, categories, direction, currency) {
     buckets.set(id, bucket)
   }
   const total = [...buckets.values()].reduce((sum, bucket) => sum + bucket.total, 0)
+  const percent = new Intl.NumberFormat(language, { style: 'percent', maximumFractionDigits: 1 })
   const row = (id, label, amount, child = false) => `<button type="button" class="stat-line${child ? ' child' : ''}" data-action="drill-category" data-value="${escape(id)}">
-    <span class="stat-name"><span>${escape(label)}</span><strong>${money(amount, currency)}</strong></span>
-    <span class="stat-track"><i style="--w:${amount / total * 100}%"></i></span>
+    <span class="stat-name"><span>${escape(label)}</span><span class="stat-pair"><strong>${money(amount, currency)}</strong>
+      <small>${percent.format(amount / total)}</small></span></span>
+    <span class="stat-track" aria-hidden="true"><i style="--w:${amount / total * 100}%"></i></span>
     </button>`
   const rows = [...buckets].sort((a, b) => b[1].total - a[1].total).map(([id, bucket]) =>
     row(id, categoryName(lookup.get(id)) || t('未分类'), bucket.total) +
@@ -135,11 +138,11 @@ export function transaction(entry, categories, reportCurrency, grouped = false, 
   const category = categories.find(item => item.id === entry.categoryId)
   const parent = categories.find(item => item.id === category?.parentId)
   const selected = entry.direction === 'transfer' ? t('转账') : categoryName(category)
-  const title = (grouped ? selected || entry.note : entry.note || selected) || t('未分类')
+  const title = entry.note || selected || t('未分类')
   const tag = entry.direction === 'transfer' ? t('转账') : [categoryName(parent), categoryName(category)].filter(Boolean).join(' · ') || t('未分类')
   const time = entry.at.slice(11, 16)
-  const detail = grouped ? [time, entry.note !== title ? entry.note : ''].filter(Boolean).join(' · ')
-    : `${tag} · ${formatDate(entry.at.slice(0, 10), 'short')} ${time}`
+  const when = grouped ? time : `${formatDate(entry.at.slice(0, 10), 'short')} ${time}`
+  const detail = [when, entry.note ? tag : categoryName(parent)].filter(Boolean).join(' · ')
   const converted = entry[reportCurrency === 'JPY' ? 'yen' : 'yuan']
   const showConverted = (reportCurrency !== entry.currency || converted !== entry.minor) && entry.direction !== 'transfer'
   // The report currency is already shown in the page controls, so only foreign amounts need a code.
