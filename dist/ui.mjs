@@ -7,6 +7,7 @@ const paths = {
   ledger: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   tag: '<path d="M3 11.5V5a2 2 0 0 1 2-2h6.5l9 9a1.6 1.6 0 0 1 0 2.3l-6.2 6.2a1.6 1.6 0 0 1-2.3 0z"/><path d="M7.5 7.5h.01" stroke-width="3"/>',
   upload: '<path d="M12 15V4m-4 4 4-4 4 4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
+  download: '<path d="M12 4v11m-4-4 4 4 4-4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/>',
   scan: '<path d="M4 8V5a1 1 0 0 1 1-1h3m8 0h3a1 1 0 0 1 1 1v3m0 8v3a1 1 0 0 1-1 1h-3m-8 0H5a1 1 0 0 1-1-1v-3M7 10h10M7 14h8"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   settings: '<path d="M4 6h5m4 0h7M4 12h9m4 0h3M4 18h3m4 0h9"/><path d="M9 4v4m4 2v4m-6 2v4"/>',

@@ -22,9 +22,9 @@ const state = {
   entries: [], categories: [], currency: 'JPY', view: 'home', month: tokyoNow().slice(0, 7),
   range: null, ledgerDay: null, ledgerDirection: 'all', ledgerCategory: null, ledgerLimit: 60,
   statsDirection: 'expense', categoryDirection: 'expense', trendPage: 0,
-  selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false
+  selecting: false, selected: new Set(), ledgerQuery: '', searchAll: false, ledgerSearchOpen: false, ledgerCategoriesOpen: false
 }
-const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'] }
+const viewNames = { home: ['账本', 'ledger'], overview: ['报表', 'chart'], categories: ['分类', 'tag'], settings: ['设置', 'settings'] }
 const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
 const phone = standalone || matchMedia('(pointer: coarse)').matches
 const allowsMotion = matchMedia('(prefers-reduced-motion: no-preference)')
@@ -57,6 +57,10 @@ const priority = item => parentOrder.includes(item.id) ? parentOrder.indexOf(ite
 const topCategories = direction => state.categories.filter(item => item.direction === direction && item.parentId === null)
   .sort((a, b) => priority(a) - priority(b) || byName(a, b))
 const children = id => id ? state.categories.filter(item => item.parentId === id).sort(byName) : []
+const categoryTile = (item, active, action, disclosure = '') => `<button type="button" class="entry-cat" aria-pressed="${active}"${disclosure} data-action="${action}" data-value="${escape(item.id)}">
+    ${categoryArt(item.icon, 27, item.name)}<span>${escape(item.name)}</span></button>`
+
+const offlineDescription = () => offlineReady ? '应用已准备就绪，可离线记账。' : '首次联网打开时会准备离线应用。'
 
 function navLink(view) {
   const [label, glyph] = viewNames[view]
@@ -67,15 +71,16 @@ function navLink(view) {
 function chrome() {
   const status = navigator.onLine ? (offlineReady ? '本机账本 · 可离线使用' : '本机账本') : '离线模式'
   byId('sidebar').innerHTML = `${brand('sidebar-brand')}<nav class="side-nav">${Object.keys(viewNames).map(navLink).join('')}</nav>
-    <div class="side-foot"><button class="side-extra" type="button" data-action="backup">${icon('shield')}设置与备份</button>
-    <div class="side-status"><span class="dot ${navigator.onLine ? '' : 'off'}"></span>${status}</div></div>`
+    <div class="side-foot"><div class="side-status"><span class="dot ${navigator.onLine ? '' : 'off'}"></span>${status}</div></div>`
   byId('topbar').innerHTML = `${brand('mobile-brand')}
     <div class="top-actions">${icoButton('screen-paste', 'scan', '粘贴屏幕账单')}
     ${icoButton('pick-import', 'upload', '导入账单')}
     <span class="desktop-add">${button('add', '记一笔', '', 'plus', 'primary')}</span></div>`
   byId('mobile-nav').innerHTML = `${navLink('home')}${navLink('overview')}
     <button class="mobile-add" type="button" data-action="add" aria-label="记一笔">${icon('plus', 26)}</button>
-    ${navLink('categories')}<button class="nav-link" type="button" data-action="backup" aria-label="设置与备份">${icon('settings', 20)}设置</button>`
+    ${navLink('categories')}${navLink('settings')}`
+  const offline = byId('settings-offline')
+  if (offline) offline.textContent = offlineDescription()
 }
 
 const periodControls = () => `<div class="filter-actions">${periodDisplay(state.range, state.month)}${tabs('currency', { JPY: 'JPY', CNY: 'CNY' }, state.currency)}</div>`
@@ -142,7 +147,9 @@ function home() {
         ${pendingBanner(totals.pending)}
       </div>
       <section class="book-activity" aria-labelledby="ledger-title">
-        <div class="activity-head"><h2 id="ledger-title" tabindex="-1">流水</h2></div>
+        <div class="activity-head"><h2 id="ledger-title" tabindex="-1">流水</h2>
+          ${icoButton('ledger-search-toggle', 'search', state.ledgerSearchOpen ? '关闭搜索' : '搜索流水',
+            `id="ledger-search-toggle" aria-controls="ledger-search-field" aria-expanded="${state.ledgerSearchOpen}"`)}</div>
         ${ledgerTools()}
         <div id="ledger-results">${ledgerResults()}</div>
       </section>
@@ -181,18 +188,37 @@ function ledgerEntries() {
   })
 }
 
-function ledgerCategoryOptions() {
+function ledgerCategoryButtonContent() {
   const selected = state.categories.find(item => item.id === state.ledgerCategory)
-  const root = selected?.parentId ? state.categories.find(item => item.id === selected.parentId) : selected
-  const rootValue = state.ledgerCategory === null ? '*' : state.ledgerCategory === '' ? '' : root?.id
+  const label = selected?.name ?? (state.ledgerCategory === '' ? '未分类' : '全部分类')
+  return `<span class="sr-only">筛选分类，当前：</span>${selected ? categoryArt(selected.icon, 17, selected.name) : icon('tag', 17)}
+    <span class="ledger-category-label">${escape(label)}</span>${icon('down', 14)}`
+}
+
+function ledgerCategoryChoices() {
+  const selected = state.categories.find(item => item.id === state.ledgerCategory)
+  const rootId = selected?.parentId ?? selected?.id
   const shown = state.ledgerDirection === 'all' ? ['expense', 'income'] : [state.ledgerDirection]
-  const roots = direction => topCategories(direction).map(item => option(item.id, item.name, rootValue)).join('')
-  const kids = root ? children(root.id) : []
-  return `<select class="control filter-select" data-filter="root" aria-label="一级分类">${option('*', '全部分类', rootValue)}
-      ${shown.length > 1 ? shown.map(direction => `<optgroup label="${directions[direction]}">${roots(direction)}</optgroup>`).join('') : roots(shown[0])}
-      ${option('', '未分类', rootValue)}</select>
-    ${kids.length ? `<select class="control filter-select" data-filter="child" aria-label="二级分类">
-      ${option(root.id, `全部${root.name}`, state.ledgerCategory)}${kids.map(item => option(item.id, item.name, state.ledgerCategory)).join('')}</select>` : ''}`
+  const parentIds = new Set(state.categories.map(item => item.parentId))
+  const pick = (item, active, disclosure) => categoryTile(item, active, 'ledger-category-pick', disclosure)
+  const shortcuts = [
+    pick({ id: '*', name: '全部分类', icon: 'shapes' }, state.ledgerCategory === null),
+    pick({ id: '', name: '未分类', icon: 'tag' }, state.ledgerCategory === '')
+  ].join('')
+  const groups = shown.map(direction => {
+    const roots = topCategories(direction)
+    if (!roots.length) return ''
+    const root = roots.find(item => item.id === rootId)
+    const kids = root ? children(root.id) : []
+    return `<div class="ledger-picker-group">
+      ${shown.length > 1 ? `<h3>${directions[direction]}</h3>` : ''}
+      <div class="category-strip" role="group" aria-label="${directions[direction]}一级分类">
+        ${roots.map(item => pick(item, item.id === rootId, parentIds.has(item.id) ? ` aria-expanded="${item.id === rootId}"` : '')).join('')}
+        ${kids.length ? `<div id="ledger-filter-children" class="category-children" role="group" aria-label="${escape(root.name)}的二级分类">
+          ${kids.map(item => pick(item, item.id === state.ledgerCategory)).join('')}</div>` : ''}
+      </div></div>`
+  }).join('')
+  return `<div class="category-strip" role="group" aria-label="快捷分类">${shortcuts}</div>${groups}`
 }
 
 function ledgerResults() {
@@ -212,10 +238,15 @@ function ledgerResults() {
 function ledgerTools() {
   const day = state.ledgerDay
   return `<div class="ledger-tools">
-      <label class="search-field">${icon('search', 17)}<span class="sr-only">搜索备注或分类</span>
+      <label class="search-field" id="ledger-search-field"${state.ledgerSearchOpen ? '' : ' hidden'}><span class="sr-only">搜索备注或分类</span>
         <input id="ledger-search" type="search" value="${escape(state.ledgerQuery)}" placeholder="搜索备注或分类" enterkeyhint="search" autocomplete="off" spellcheck="false"></label>
       <div class="ledger-filter">${tabs('ledger-direction', { all: '全部', expense: directions.expense, income: directions.income }, state.ledgerDirection)}
-        <div id="ledger-categories" class="category-filter">${ledgerCategoryOptions()}</div></div>
+        <button type="button" id="ledger-category-toggle" class="ledger-category-toggle" data-action="ledger-categories-toggle"
+          aria-controls="ledger-category-picker" aria-expanded="${state.ledgerCategoriesOpen}">${ledgerCategoryButtonContent()}</button></div>
+      <section id="ledger-category-picker" class="ledger-category-picker" aria-labelledby="ledger-picker-title"${state.ledgerCategoriesOpen ? '' : ' hidden'}>
+        <div class="ledger-picker-head"><h3 id="ledger-picker-title">选择分类</h3>${button('ledger-categories-close', '完成', '', '', 'subtle')}</div>
+        <div id="ledger-category-options" class="ledger-category-options">${state.ledgerCategoriesOpen ? ledgerCategoryChoices() : ''}</div>
+      </section>
       ${day ? `<button class="filter-tag" type="button" data-action="clear-drill" aria-label="清除日期筛选">${escape(day.start === day.end ? dayLabel(day.start) : `${day.start} ～ ${day.end}`)} ×</button>` : ''}
     </div>`
 }
@@ -228,11 +259,58 @@ function refreshLedgerResults() {
   syncSelection()
 }
 
-function refreshLedgerCategories(focusRoot = false) {
-  const categories = byId('ledger-categories')
-  categories.innerHTML = ledgerCategoryOptions()
-  if (focusRoot) categories.firstElementChild.focus({ preventScroll: true })
+function setLedgerSearchOpen(open) {
+  state.ledgerSearchOpen = open
+  const trigger = byId('ledger-search-toggle')
+  const input = byId('ledger-search')
+  const label = open ? '关闭搜索' : '搜索流水'
+  trigger.setAttribute('aria-expanded', String(open))
+  trigger.setAttribute('aria-label', label)
+  trigger.title = label
+  byId('ledger-search-field').hidden = !open
+  if (open) {
+    if (state.ledgerCategoriesOpen) {
+      state.ledgerCategoriesOpen = false
+      refreshLedgerCategories()
+    }
+    input.focus()
+    return
+  }
+  input.value = state.ledgerQuery = ''
+  state.searchAll = false
+  state.ledgerLimit = 60
+  trigger.focus({ preventScroll: true })
   refreshLedgerResults()
+}
+
+function placeLedgerCategoryChildren() {
+  const strip = byId('ledger-filter-children')?.parentElement
+  if (strip) placeCategoryChildren(strip)
+}
+
+function refreshLedgerCategories() {
+  const trigger = byId('ledger-category-toggle')
+  const options = byId('ledger-category-options')
+  const open = state.ledgerCategoriesOpen
+  trigger.innerHTML = ledgerCategoryButtonContent()
+  trigger.setAttribute('aria-expanded', String(open))
+  byId('ledger-category-picker').hidden = !open
+  const scroll = options.scrollTop
+  options.innerHTML = open ? ledgerCategoryChoices() : ''
+  placeLedgerCategoryChildren()
+  options.scrollTop = scroll
+}
+
+function setLedgerCategoriesOpen(open) {
+  state.ledgerCategoriesOpen = open
+  refreshLedgerCategories()
+  if (open) {
+    byId('ledger-search').blur()
+    const options = byId('ledger-category-options')
+    const active = options.querySelector('.category-children [aria-pressed="true"], [aria-expanded="true"]')
+    if (active) options.scrollTop = active.offsetTop - 8
+    byId('ledger-category-picker').scrollIntoView({ block: 'nearest' })
+  } else byId('ledger-category-toggle').focus({ preventScroll: true })
 }
 
 function categoryPage() {
@@ -253,7 +331,8 @@ function categoryPage() {
 
 function render() {
   chrome()
-  main.innerHTML = ({ home, overview, categories: categoryPage })[state.view]()
+  main.innerHTML = ({ home, overview, categories: categoryPage, settings: settingsPage })[state.view]()
+  placeLedgerCategoryChildren()
   syncSelection()
 }
 
@@ -350,6 +429,8 @@ function resetLedgerFilters() {
   state.ledgerDirection = 'all'
   state.ledgerQuery = ''
   state.searchAll = false
+  state.ledgerSearchOpen = false
+  state.ledgerCategoriesOpen = false
 }
 
 function go(view, focusLedger = false) {
@@ -416,9 +497,9 @@ function openCategoryForm({ parentId, categoryId } = {}) {
   }
 }
 
-function placeEntryChildren(strip) {
+function placeCategoryChildren(strip) {
   const childGrid = strip.querySelector('.category-children')
-  if (childGrid.hidden || !strip.clientWidth) return
+  if (!childGrid || childGrid.hidden || !strip.clientWidth) return
 
   const buttons = Array.from(strip.children).filter(item => item !== childGrid)
   const activeIndex = buttons.findIndex(item => item.getAttribute('aria-expanded') === 'true')
@@ -434,7 +515,8 @@ function placeEntryChildren(strip) {
 
 window.addEventListener('resize', () => {
   const strip = dialog.querySelector('.category-strip')
-  if (dialog.open && strip) placeEntryChildren(strip)
+  if (dialog.open && strip) placeCategoryChildren(strip)
+  placeLedgerCategoryChildren()
 })
 
 function selectCategories(form, selectedId = '') {
@@ -450,8 +532,7 @@ function selectCategories(form, selectedId = '') {
   if (adder.parentElement === childGrid) section.append(adder)
   section.hidden = direction === 'transfer'
   if (section.hidden) return
-  const pill = (item, active, disclosure = '') => `<button type="button" class="entry-cat" aria-pressed="${active}"${disclosure} data-action="entry-category" data-value="${escape(item.id)}">
-    ${categoryArt(item.icon, 27, item.name)}<span>${escape(item.name)}</span></button>`
+  const pill = (item, active, disclosure) => categoryTile(item, active, 'entry-category', disclosure)
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
   strip.innerHTML = roots.map(item => pill(item, item.id === rootId, item.id ?
     ` aria-expanded="${item.id === rootId}" aria-controls="entry-subcategories"` : '')).join('') +
@@ -463,7 +544,7 @@ function selectCategories(form, selectedId = '') {
   childGrid.innerHTML = root ? children(rootId).map(item => pill(item, item.id === selectedId)).join('') +
     `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类"><span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>` : ''
   strip.append(childGrid)
-  placeEntryChildren(strip)
+  placeCategoryChildren(strip)
   section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
 }
 
@@ -763,13 +844,23 @@ async function refreshRates(showStatus = false) {
   if (showStatus) toast(updated ? `已补齐 ${updated} 笔汇率` : '暂未获取到可补齐的参考汇率')
 }
 
-function openBackup() {
-  openDialog('设置与备份', `<div class="form-grid">
-    <p class="fine">${offlineReady ? '应用已准备就绪，可离线记账。' : '首次联网打开时会准备离线应用。'}账本数据保存在当前设备。</p>
-    ${standalone ? '' : '<p class="fine">在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。安装后从主屏幕开始记账。</p>'}
-    <div class="backup-actions">${button('export-backup', '导出完整备份', '', '', 'primary')}${button('pick-backup', '恢复备份')}${button('screen-guide', '配置屏幕记账', '', 'scan')}</div>
-    <p class="fine">备份包括流水、自定义分类和汇总币种，可存到 iPhone 的「文件」。</p>
-    ${errorPlaceholder}</div>`)
+function settingsPage() {
+  const row = (action, glyph, label) => `<button class="settings-row" type="button" data-action="${action}">
+    ${icon(glyph, 19)}<span>${label}</span>${icon('right', 15)}</button>`
+  return `<div class="page-heading"><h1>设置</h1></div>
+    <div class="settings-grid">
+      <section class="panel settings-panel"><h2>数据与备份</h2>
+        <p class="fine">账本保存在当前设备。完整备份包含流水、分类和汇总币种。</p>
+        <div class="settings-rows">${row('export-backup', 'download', '导出完整备份')}${row('pick-backup', 'upload', '恢复备份')}</div>
+      </section>
+      <section class="panel settings-panel"><h2>屏幕记账</h2>
+        <div class="settings-rows">${row('screen-guide', 'scan', '配置屏幕记账')}</div>
+      </section>
+      <section class="panel settings-panel"><h2>应用与离线</h2>
+        <p class="fine" id="settings-offline">${offlineDescription()}</p>
+        ${standalone ? '' : '<p class="fine">在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。</p>'}
+      </section>
+    </div>`
 }
 
 async function exportBackup() {
@@ -782,8 +873,7 @@ async function exportBackup() {
   const a = document.createElement('a')
   a.href = url
   a.download = file.name
-  // Keep the temporary link inside the modal's active subtree.
-  dialog.append(a)
+  main.append(a)
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60000)
@@ -1085,6 +1175,20 @@ const actions = {
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },
   'stats-direction': ({ value }) => { state.statsDirection = value; render() },
   'trend-page': ({ value }) => { state.trendPage = Number(value); render() },
+  'ledger-search-toggle': () => setLedgerSearchOpen(!state.ledgerSearchOpen),
+  'ledger-categories-toggle': () => setLedgerCategoriesOpen(!state.ledgerCategoriesOpen),
+  'ledger-categories-close': () => setLedgerCategoriesOpen(false),
+  'ledger-category-pick': ({ value }, control) => {
+    state.ledgerCategory = value === '*' ? null : value
+    state.ledgerLimit = 60
+    if (control.hasAttribute('aria-expanded')) {
+      refreshLedgerCategories()
+      const active = byId('ledger-category-options').querySelector('[aria-expanded="true"]')
+      active?.focus({ preventScroll: true })
+      byId('ledger-filter-children')?.firstElementChild?.scrollIntoView({ block: 'nearest' })
+    } else setLedgerCategoriesOpen(false)
+    refreshLedgerResults()
+  },
   'ledger-direction': ({ value }, control) => {
     if (state.ledgerDirection === value) return
     state.ledgerDirection = value
@@ -1093,6 +1197,7 @@ const actions = {
     state.ledgerLimit = 60
     for (const tab of control.parentElement.children) tab.setAttribute('aria-pressed', String(tab === control))
     refreshLedgerCategories()
+    refreshLedgerResults()
   },
   'more-ledger': () => { state.ledgerLimit += 60; refreshLedgerResults() },
   'clear-drill': (_, control) => {
@@ -1143,7 +1248,6 @@ const actions = {
     dialog.scrollTop = position
   },
   'confirm-import': () => confirmImport(),
-  backup: openBackup,
   'export-backup': exportBackup,
   'pick-backup': () => pickFile('file-backup'),
   'confirm-restore': async (_, control) => {
@@ -1282,9 +1386,17 @@ document.addEventListener('visibilitychange', () => {
   reload().then(() => refreshRates()).catch(handleError)
 })
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && state.selecting && !dialog.open) { stopSelecting(); refreshLedgerResults() }
+  if (event.isComposing || event.keyCode === 229 || dialog.open) return
+  if (event.key === 'Escape') {
+    if (state.ledgerSearchOpen && ['ledger-search', 'ledger-search-toggle'].includes(event.target.id)) {
+      event.preventDefault()
+      setLedgerSearchOpen(false)
+    } else if (state.ledgerCategoriesOpen && (event.target.id === 'ledger-category-toggle' || byId('ledger-category-picker')?.contains(event.target))) {
+      setLedgerCategoriesOpen(false)
+    } else if (state.selecting) { stopSelecting(); refreshLedgerResults() }
+  }
   // Search runs as you type; Enter just puts the phone keyboard away.
-  if (event.key === 'Enter' && event.target.id === 'ledger-search' && !event.isComposing && event.keyCode !== 229) event.target.blur()
+  if (event.key === 'Enter' && event.target.id === 'ledger-search') event.target.blur()
 })
 
 main.addEventListener('input', event => {
@@ -1294,15 +1406,6 @@ main.addEventListener('input', event => {
   refreshLedgerResults()
 })
 
-main.addEventListener('change', event => {
-  const control = event.target
-  const filter = control.dataset.filter
-  if (!filter) return
-  state.ledgerCategory = control.value === '*' ? null : control.value
-  state.ledgerLimit = 60
-  if (filter === 'root') refreshLedgerCategories(true)
-  else refreshLedgerResults()
-})
 document.addEventListener('pointerdown', event => {
   if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()
 })
