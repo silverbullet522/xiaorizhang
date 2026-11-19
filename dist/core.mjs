@@ -135,7 +135,10 @@ export function withQuotes(entry, quotes) {
   return result
 }
 
-const statement = { date: '取引日', debit: '出金金額(円)', credit: '入金金額(円)', foreign: '海外出金金額', currency: '通貨', rate: '変換レート(円)', type: '取引内容', merchant: '取引先', id: '取引番号' }
+const statement = {
+  date: '取引日', debit: '出金金額(円)', credit: '入金金額(円)', foreign: '海外出金金額',
+  currency: '通貨', rate: '変換レート(円)', type: '取引内容', merchant: '取引先', method: '取引方法', id: '取引番号'
+}
 const emptyCell = value => value == null || ['', '-', '—', '–'].includes(String(value).trim())
 
 export function statementColumns(headers) {
@@ -192,6 +195,10 @@ export function importRows(table, options) {
   return rows.map(({ number, cells }) => {
     const invalid = message => ({ number, error: message })
     const cell = key => cells[(statement ?? options)[key]]
+    if (statement && String(cell('method') ?? '').normalize('NFKC').trim() === 'PayPayポイント') {
+      const type = String(cell('type') ?? '').normalize('NFKC').trim()
+      if (type === 'ポイント、残高の獲得' || type === 'ポイント、残高の取消') return { number, ignored: true }
+    }
     const at = dateTime(cell('date'), excel1904)
     if (!at) return invalid('日期格式无效')
     let currency

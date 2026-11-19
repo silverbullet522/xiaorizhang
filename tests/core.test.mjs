@@ -105,6 +105,27 @@ test('日文账单保留海外原币并只将实扣额计入日元统计', () =>
   assert.equal(duplicatePreviews(rows, entries).filter(row => row.duplicate).length, 2)
 })
 
+test('PayPay 导入跳过积分发放与撤销，保留同编号付款和积分支付', () => {
+  const [headers, ...data] = csvRows([
+    '取引日,出金金額（円）,入金金額（円）,取引内容,取引先,取引方法,取引番号',
+    '2026/10/21 16:48:08,-,18,ポイント、残高の獲得,商店,PayPayポイント,A1',
+    '2026/10/20 16:48:08,18,-,ポイント、残高の取消,商店,PayPayポイント,A1',
+    '2026/10/18 02:25:50,1280,-,支払い,商店,PayPayカード,A1',
+    '2026/10/17 02:25:50,300,-,支払い,商店,PayPayポイント,A2',
+    '2026/10/16 02:25:50,-,200,ポイント、残高の獲得,商店,PayPay残高,A3',
+    '2026/10/15 02:25:50,-,100,返金,商店,PayPay残高,A4'
+  ].join('\n'))
+  const table = { headers, rows: data.map((cells, index) => ({ cells, number: index + 2 })) }
+  const rows = importRows(table, {})
+  assert.deepEqual(rows.filter(row => row.ignored), [{ number: 2, ignored: true }, { number: 3, ignored: true }])
+  const ready = duplicatePreviews(rows, []).filter(row => row.entry && !row.duplicate)
+  assert.deepEqual(ready.map(row => [row.number, row.entry.direction, row.entry.minor]), [
+    [4, 'expense', 1280], [5, 'expense', 300], [6, 'income', 200], [7, 'income', 100]
+  ])
+  assert.equal(ready[0].entry.sourceKey, 'statement:A1')
+  assert.equal(duplicatePreviews(rows, ready.map(row => row.entry)).filter(row => row.duplicate).length, 4)
+})
+
 test('通用表格尊重收支列，报告异常行，并排除转账金额', () => {
   const [headers, ...data] = csvRows('日期,金额,收支,备注\n2026-11-19,10,转账,"多行\n""备注"""\n无效,8,支出,错误')
   const table = { headers, fileKey: 'sheet', rows: data.map((cells, index) => ({ cells, number: index + 2 })) }

@@ -1010,12 +1010,14 @@ function importCategoryLabel(id) {
 
 function importPreview() {
   if (!importState.preview) return ''
-  const rows = duplicatePreviews(importState.preview, state.entries)
+  const rows = duplicatePreviews(importState.preview.filter(row => !row.ignored), state.entries)
+  const ignored = importState.preview.length - rows.length
   const counts = { ready: rows.filter(row => row.entry && !row.duplicate).length, invalid: rows.filter(row => row.error).length, duplicate: rows.filter(row => row.duplicate).length }
   // Offered above and below the rows so a long preview never needs scrolling just to import.
   const confirm = button('confirm-import', `导入 ${counts.ready} 笔有效流水`, counts.ready ? '' : 'disabled', '', 'primary')
   return `<section class="import-preview"><div class="import-top"><div class="import-counts">
-    <span class="chip">待导入 ${counts.ready}</span><span class="chip">重复 ${counts.duplicate}</span><span class="chip">有问题 ${counts.invalid}</span></div>
+    <span class="chip">待导入 ${counts.ready}</span><span class="chip">重复 ${counts.duplicate}</span><span class="chip">有问题 ${counts.invalid}</span>
+    ${ignored ? `<span class="chip">已忽略 ${ignored} 条积分记录</span>` : ''}</div>
     ${rows.length ? confirm : ''}</div>
     <div>${rows.slice(0, importState.limit).map(({ number, entry, duplicate, error }) => {
       if (!entry) return `<div class="import-row"><span>第 ${number} 行</span><span class="form-error">${escape(error)}</span></div>`
@@ -1026,7 +1028,7 @@ function importPreview() {
         ${duplicate ? '<span class="chip">重复</span>' : `<select class="control" aria-label="第 ${number} 行收支类型" data-import-row="${number}">
         ${directionsFor(direction).map(([id, label]) => option(id, label, direction)).join('')}</select>`}</div>`
     }).join('')}</div>
-    ${!rows.length ? '<p class="fine">这张表只有表头。</p>' : ''}
+    ${!rows.length ? `<p class="fine">${ignored ? '这张表只有已忽略的积分记录。' : '这张表只有表头。'}</p>` : ''}
     <div class="form-footer">${rows.length > importState.limit ? button('more-import', '显示更多', '', '', 'leading') : ''}
     ${confirm}</div></section>`
 }
