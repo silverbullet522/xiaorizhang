@@ -164,6 +164,9 @@ dialog.wide { width: min(730px, calc(100% - 30px)) }
 .form-hint { font-size: 13px; color: var(--muted); min-height: 19px }
 .form-error { font-size: 14px; color: var(--danger) }
 .form-error:empty { display: none }
+.screen-review { display: flex; gap: 8px; align-items: start; color: var(--green); background: var(--soft); padding: 9px 12px; border-radius: 8px; font-size: 14px }
+.setup-steps { margin: 0; padding-left: 22px; display: grid; gap: 12px; font-size: 15px }
+a.button { text-decoration: none }
 .form-footer { display: flex; justify-content: flex-end; gap: 9px; flex-wrap: wrap; align-items: center; padding-top: 3px }
 .form-footer .leading { margin-right: auto }
 .fx { padding: 9px 12px; border-radius: 8px; background: #eaf1e6; color: var(--green); min-height: 39px; font-size: 14px }

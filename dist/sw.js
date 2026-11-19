@@ -1,11 +1,11 @@
 const prefix = 'hiba-shell-'
-const version = prefix + '2'
+const version = prefix + '3'
 const root = new URL('./', self.location.href)
 const home = root.href
 const index = new URL('index.html', root).href
 const files = [
   './', 'style.css', 'app.mjs', 'core.mjs', 'storage.mjs', 'rates.mjs',
-  'ui.mjs', 'tables.mjs', 'app.webmanifest', 'icons/touch.png', 'icons/app-192.png',
+  'ui.mjs', 'tables.mjs', 'screen.mjs', 'app.webmanifest', 'icons/touch.png', 'icons/app-192.png',
   'icons/app-512.png', 'vendor/xlsx.full.min.js'
 ].map(file => new URL(file, root).href)
 

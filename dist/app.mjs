@@ -8,6 +8,7 @@ import {
 } from './storage.mjs'
 import { loadQuotes, quotesFor } from './rates.mjs'
 import { guessColumns, readFile } from './tables.mjs'
+import { parseScreenText, screenTextLimit } from './screen.mjs'
 import {
   brand, breakdown, button, currencyOptions, dayLabel, emptyLedger, escape, icoButton, icon,
   option, periodDisplay, summaryCards, tabs, transaction, trend
@@ -61,7 +62,8 @@ function chrome() {
     <div class="side-foot"><button class="side-extra" type="button" data-action="backup">${icon('shield')}设置与备份</button>
     <div class="side-status"><span class="dot ${navigator.onLine ? '' : 'off'}"></span>${status}</div></div>`
   byId('topbar').innerHTML = `<span class="top-label">${icon('shield', 16)}${status}</span>${brand('mobile-brand')}
-    <div class="top-actions">${icoButton('pick-import', 'upload', '导入账单')}
+    <div class="top-actions">${icoButton('screen-paste', 'scan', '粘贴屏幕账单')}
+    ${icoButton('pick-import', 'upload', '导入账单')}
     ${icoButton('backup', 'settings', '设置与备份')}
     <span class="desktop-add">${button('add', '记一笔', '', 'plus', 'primary')}</span></div>`
   byId('mobile-nav').innerHTML = `${navLink('overview')}${navLink('ledger')}${navLink('categories')}
@@ -198,18 +200,29 @@ function selectCategories(form, direction, selectedId, rootId) {
 }
 
 const amountText = (minor, currency) => (minor / (currency === 'JPY' ? 1 : 100)).toFixed(currency === 'JPY' ? 0 : 2)
-function openEntry(id) {
+const screenReview = {
+  ready: '请核对屏幕上的金额、币种和收支方向，再保存。',
+  unknownCurrency: '已找到金额，请确认并选择币种。',
+  multiple: '画面中有多个可能的金额，请填写实际扣款或到账金额。',
+  unfinished: '画面显示交易未完成。请核对实际是否发生收支。',
+  missing: '没有找到明确的金额，请对照付款或收款页面填写。'
+}
+
+function openEntry(id, screen) {
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
-  const at = entry?.at ?? tokyoNow()
-  const currency = entry?.currency ?? 'JPY'
-  const amount = entry ? amountText(entry.minor, currency) : ''
-  openDialog(entry ? '编辑流水' : '记一笔', `<form id="entry-form" class="form-grid" data-id="${entry?.id ?? ''}">
+  const at = entry?.at ?? screen?.at ?? tokyoNow()
+  const currency = entry?.currency ?? (screen ? screen.currency ?? '' : 'JPY')
+  const amount = entry ? amountText(entry.minor, currency) : screen?.amount ?? ''
+  const direction = entry?.direction ?? screen?.direction ?? 'expense'
+  const choices = (screen ? option('', '请选择币种', currency) : '') + currencyOptions(currency)
+  openDialog(entry ? '编辑流水' : screen ? '核对屏幕账单' : '记一笔', `<form id="entry-form" class="form-grid" data-id="${entry?.id ?? ''}">
+    ${screen ? `<p class="screen-review">${icon('scan', 18)}<span>${screenReview[screen.status]}</span></p>` : ''}
     <div class="form-pair">
-      ${selectField('收支类型', 'direction', Object.entries(directions).map(([key, value]) => option(key, value, entry?.direction ?? 'expense')).join(''))}
-      ${selectField('币种', 'currency', currencyOptions(currency))}
+      ${selectField('收支类型', 'direction', Object.entries(directions).map(([key, value]) => option(key, value, direction)).join(''))}
+      ${field('币种', `<select name="currency" required>${choices}</select>`)}
     </div>
-    ${field('金额', `<input name="amount" inputmode="${currency === 'JPY' ? 'numeric' : 'decimal'}" value="${amount}" autocomplete="off" maxlength="24" placeholder="0" required>`)}
+    ${field('金额', `<input name="amount" inputmode="${currency === 'JPY' ? 'numeric' : 'decimal'}" value="${escape(amount)}" autocomplete="off" maxlength="24" placeholder="0" required>`)}
     <div class="fx" id="fx-preview" aria-live="polite"></div>
     <div class="form-pair">
       ${field('日期 · 东京时间', `<input name="day" type="date" min="1900-01-01" max="9999-12-31" value="${at.slice(0, 10)}" required>`)}
@@ -218,11 +231,11 @@ function openEntry(id) {
     <div class="form-pair">
       ${selectField('一级分类', 'parent', '')}${selectField('二级分类', 'child', '')}
     </div>
-    ${field('备注', `<textarea name="note" maxlength="500" placeholder="商户或其他备注">${escape(entry?.note ?? '')}</textarea>`)}
+    ${field('备注', `<textarea name="note" maxlength="500" placeholder="商户或其他备注">${escape(entry?.note ?? screen?.note ?? '')}</textarea>`)}
     ${errorPlaceholder}<div class="form-footer">${entry ? button('delete-entry', '删除', `data-value="${entry.id}"`, '', 'danger leading') : ''}
     ${cancelButton}${submitButton('保存流水')}</div></form>`)
   const form = byId('entry-form')
-  selectCategories(form, entry?.direction ?? 'expense', entry?.categoryId)
+  selectCategories(form, direction, entry?.categoryId)
   refreshEntryQuote(form, true)
 }
 
@@ -231,7 +244,7 @@ function entryDraft(form) {
   const at = dateTime(`${data.day.value}T${data.time.value}`)
   const currency = data.currency.value
   const minor = amountMinor(data.amount.value, currency)
-  if (!at || minor === null || minor <= 0) return null
+  if (!at || !currency || minor === null || minor <= 0) return null
   const previous = state.entries.find(item => item.id === form.dataset.id)
   const sameAmount = previous?.currency === currency && previous?.minor === minor
   const sameDay = previous?.at.slice(0, 10) === at.slice(0, 10)
@@ -247,6 +260,52 @@ function entryDraft(form) {
     yuan: preserve ? previous.yuan : null,
     fx: sameDay ? previous.fx : {}
   }, quotesFor(at.slice(0, 10)))
+}
+
+function openScreenGuide() {
+  openDialog('配置 iPhone 快捷指令', `<div class="form-grid">
+    <ol class="setup-steps">
+      <li>在「快捷指令」新建「小日账·屏幕记账」。依次添加「截屏」（Take Screenshot）、「从图像提取文本」（Extract Text from Image）、「拷贝至剪贴板」（Copy to Clipboard）。后两步分别使用上一步的结果。</li>
+      <li>在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。</li>
+      <li>在付款或收款详情上轻点背面两下，再打开主屏幕的小日账，点顶部扫描图标「粘贴屏幕账单」。如果 iPhone 弹出「粘贴」，轻点允许。核对后保存。</li>
+    </ol>
+    <div class="form-footer">
+      <a class="button leading" href="shortcuts://create-shortcut">打开快捷指令</a>
+      ${button('screen-input', '返回屏幕记账')}
+    </div></div>`)
+}
+
+function showScreenInput() {
+  openDialog('屏幕记账', `<form id="screen-form" class="form-grid">
+    <p class="fine">在付款或收款页面运行捷径后，可从剪贴板读取屏幕文字，也可以长按下方输入框粘贴。</p>
+    ${field('识别出的文字', `<textarea name="screenText" maxlength="${screenTextLimit}" placeholder="粘贴捷径识别出的账单文字" spellcheck="false"></textarea>`)}
+    ${errorPlaceholder}
+    <div class="form-footer">
+      ${button('screen-guide', '配置轻点背面', '', '', 'leading')}
+      ${button('screen-read', '读取剪贴板')}
+      ${submitButton('识别并预填')}
+    </div></form>`)
+}
+
+function applyScreenText(text) {
+  if (!text.trim()) {
+    formError('这里还没有账单文字。运行捷径后再粘贴。')
+    return
+  }
+  openEntry(null, parseScreenText(text))
+}
+
+async function readScreenClipboard() {
+  const form = byId('screen-form')
+  if (!navigator.clipboard?.readText) return
+  let text
+  try {
+    text = await navigator.clipboard.readText()
+  } catch {
+    // Safari also supports the system paste menu on the text area.
+    return
+  }
+  if (dialog.open && byId('screen-form') === form) applyScreenText(text)
 }
 
 function quotePreview(form) {
@@ -295,7 +354,7 @@ function openBackup() {
   openDialog('设置与备份', `<div class="form-grid">
     <p class="fine">${offlineReady ? '应用已准备就绪，可离线记账。' : '首次联网打开时会准备离线应用。'}账本数据保存在当前设备。</p>
     ${standalone ? '' : '<p class="fine">在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。安装后从主屏幕开始记账。</p>'}
-    <div class="backup-actions">${button('export-backup', '导出完整备份', '', '', 'primary')}${button('pick-backup', '恢复备份')}</div>
+    <div class="backup-actions">${button('export-backup', '导出完整备份', '', '', 'primary')}${button('pick-backup', '恢复备份')}${button('screen-guide', '配置屏幕记账', '', 'scan')}</div>
     <p class="fine">备份包括流水、自定义分类和汇总币种，可存到 iPhone 的「文件」。</p>
     ${errorPlaceholder}</div>`)
 }
@@ -500,6 +559,10 @@ const actions = {
   },
   add: () => openEntry(),
   edit: ({ value }) => openEntry(value),
+  'screen-paste': () => { showScreenInput(); return readScreenClipboard() },
+  'screen-input': showScreenInput,
+  'screen-read': readScreenClipboard,
+  'screen-guide': openScreenGuide,
   'delete-entry': async ({ value }) => {
     if (!confirm('删除这笔流水？')) return
     await deleteEntry(value)
@@ -584,7 +647,10 @@ document.addEventListener('click', event => {
   catch (error) { handleError(error) }
 })
 
-const forms = { 'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit }
+const forms = {
+  'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
+  'screen-form': form => applyScreenText(form.elements.screenText.value)
+}
 dialog.addEventListener('submit', async event => {
   event.preventDefault()
   const form = event.target
