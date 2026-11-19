@@ -260,24 +260,48 @@ function selectCategories(form, selectedId = '') {
   const strip = section.querySelector('.category-strip')
   const childGrid = section.querySelector('.category-children')
   form.elements.category.value = selected?.id ?? ''
+  section.querySelector('.category-adder').hidden = true
   section.hidden = direction === 'transfer'
   if (section.hidden) return
   const pill = (item, active) => `<button type="button" class="entry-cat" aria-pressed="${active}" data-action="entry-category" data-value="${item.id}">
     ${categoryArt(item.icon, 19)}<span>${escape(item.name)}</span></button>`
   const roots = [...topCategories(direction), { id: '', name: '未分类', icon: 'tag' }]
-  const oldScroll = strip.scrollLeft
-  strip.innerHTML = roots.map(item => pill(item, item.id === rootId)).join('')
-  strip.scrollLeft = oldScroll
-  if (selected) {
-    const active = strip.querySelector('[aria-pressed="true"]').getBoundingClientRect()
-    const bounds = strip.getBoundingClientRect()
-    if (active.right > bounds.right) strip.scrollLeft += active.right - bounds.right + 4
-    else if (active.left < bounds.left) strip.scrollLeft -= bounds.left - active.left + 4
-  }
-  const secondary = children(rootId)
-  childGrid.hidden = !secondary.length
-  childGrid.innerHTML = secondary.map(item => pill(item, item.id === selectedId)).join('')
+  strip.innerHTML = roots.map(item => pill(item, item.id === rootId)).join('') +
+    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="" aria-label="新增${directions[direction]}一级分类">
+    <span class="category-icon">${icon('plus', 18)}</span><span>添加</span></button>`
+  // A chosen top-level category always offers its own add slot, even before it has subcategories.
+  const root = state.categories.find(item => item.id === rootId)
+  childGrid.hidden = !root
+  childGrid.innerHTML = root ? children(rootId).map(item => pill(item, item.id === selectedId)).join('') +
+    `<button type="button" class="entry-cat entry-add" data-action="category-add" data-value="${escape(rootId)}" aria-label="在${escape(root.name)}下新增二级分类">${icon('plus', 14)}<span>添加</span></button>` : ''
   section.querySelector('.entry-category-name').textContent = selected?.name ?? '未分类'
+}
+
+function openCategoryAdder(form, parentId) {
+  const parent = state.categories.find(item => item.id === parentId)
+  const adder = form.querySelector('.category-adder')
+  const input = adder.querySelector('input')
+  adder.dataset.parent = parent?.id ?? ''
+  adder.querySelector('.category-adder-error').textContent = ''
+  input.value = ''
+  input.placeholder = parent ? `「${parent.name}」下的新分类` : `新的${directions[form.elements.direction.value]}一级分类`
+  adder.hidden = false
+  input.focus()
+}
+
+// Adds the category without leaving the entry sheet, then selects it so the draft keeps going.
+async function saveInlineCategory(form) {
+  const adder = form.querySelector('.category-adder')
+  if (adder.dataset.saving) return
+  const parent = state.categories.find(item => item.id === adder.dataset.parent)
+  adder.dataset.saving = 'true'
+  try {
+    const result = await addCategory(parent?.id ?? null, parent?.direction ?? form.elements.direction.value, adder.querySelector('input').value)
+    if (result.error) { adder.querySelector('.category-adder-error').textContent = result.error; return }
+    await reload()
+    if (byId('entry-form') === form) selectCategories(form, result.id)
+    toast('分类已添加')
+  } finally { delete adder.dataset.saving }
 }
 
 const amountText = (minor, currency) => (minor / (currency === 'JPY' ? 1 : 100)).toFixed(currency === 'JPY' ? 0 : 2)
@@ -332,6 +356,12 @@ function openEntry(id, screen) {
       <div class="entry-category-heading"><h3>分类</h3><span class="entry-category-name"></span></div>
       <div class="category-strip" aria-label="一级分类"></div>
       <div class="category-children" aria-label="二级分类"></div>
+      <div class="category-adder" hidden>
+        <input class="control" type="text" maxlength="24" autocomplete="off" enterkeyhint="done" aria-label="新分类名称">
+        <button type="button" class="button" data-action="category-add-cancel">取消</button>
+        <button type="button" class="button primary" data-action="category-add-save">添加</button>
+        <span class="category-adder-error" role="alert"></span>
+      </div>
     </section></div>
     <div class="entry-footer">
     <div class="entry-note">
@@ -682,18 +712,21 @@ async function submitEntry(form, control) {
   await refreshRates()
 }
 
+async function addCategory(parentId, direction, value) {
+  const name = value.normalize('NFKC').trim()
+  if (!name || name.length > 24) return { error: '请输入 1 到 24 个字符的名称。' }
+  const taken = { error: '同级分类中已有这个名称。' }
+  if (state.categories.some(item => item.parentId === parentId && item.direction === direction && item.name === name)) return taken
+  const parent = state.categories.find(item => item.id === parentId)
+  const category = { id: crypto.randomUUID(), parentId, direction, name, icon: parent?.icon ?? 'tag' }
+  return await saveCategory(category) ? { id: category.id } : taken
+}
+
 async function submitCategory(form) {
   const parent = state.categories.find(item => item.id === form.dataset.parent)
   const direction = parent?.direction ?? form.elements.direction.value
-  const parentId = parent?.id ?? null
-  const name = form.elements.name.value.normalize('NFKC').trim()
-  if (!name || name.length > 24) { formError('请输入 1 到 24 个字符的名称。'); return }
-  if (state.categories.some(item => item.parentId === parentId && item.direction === direction && item.name === name)) {
-    formError('同级分类中已有这个名称。')
-    return
-  }
-  const added = await saveCategory({ id: crypto.randomUUID(), parentId, direction, name, icon: parent?.icon ?? 'tag' })
-  if (!added) { formError('同级分类中已有这个名称。'); return }
+  const result = await addCategory(parent?.id ?? null, direction, form.elements.name.value)
+  if (result.error) { formError(result.error); return }
   state.categoryDirection = direction
   dialog.close()
   await reload()
@@ -750,6 +783,9 @@ const actions = {
     toast('流水已删除')
   },
   'category-new': ({ value }) => createCategory(value),
+  'category-add': ({ value }) => openCategoryAdder(byId('entry-form'), value),
+  'category-add-cancel': () => { byId('entry-form').querySelector('.category-adder').hidden = true },
+  'category-add-save': () => saveInlineCategory(byId('entry-form')),
   'category-direction': ({ value }) => { state.categoryDirection = value; render() },
   'stats-direction': ({ value }) => { state.statsDirection = value; render() },
   'trend-page': ({ value }) => { state.trendPage = Number(value); render() },
@@ -864,6 +900,13 @@ dialog.addEventListener('change', event => {
   if (control.name === 'direction') selectCategories(form)
   if (control.name === 'currency') updateEntryCurrency(form)
   if (['currency', 'day', 'time'].includes(control.name)) refreshEntryQuote(form, control.name !== 'time')
+})
+
+dialog.addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || !event.target.matches('.category-adder input')) return
+  // Enter must not submit the entry; while an IME is composing it only confirms the text.
+  event.preventDefault()
+  if (!event.isComposing && event.keyCode !== 229) saveInlineCategory(event.target.form).catch(handleError)
 })
 
 dialog.addEventListener('input', event => {
