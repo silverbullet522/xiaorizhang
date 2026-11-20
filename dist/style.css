@@ -102,7 +102,7 @@ a { color: var(--link) }
   border-right: 1px solid var(--line); background: var(--bg); display: flex; flex-direction: column;
 }
 .brand { display: inline-flex; gap: 10px; align-items: center; font-size: 17px; font-weight: 650; letter-spacing: .02em }
-.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: #b83c28; color: #fff }
+.brand-mark { display: block; flex: none; width: 30px; height: 30px; border-radius: 8px }
 .sidebar-brand { margin: 0 8px 30px }
 .side-nav { display: grid; gap: 2px }
 .nav-link {

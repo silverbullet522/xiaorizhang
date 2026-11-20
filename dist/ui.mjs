@@ -3,7 +3,6 @@ import { categoryName, directionLabel, formatDate, language, t } from './i18n.mj
 import { categoryIconPaths, categoryIconTone } from './icons.mjs'
 
 const paths = {
-  logo: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 3v18m3-12h4m-4 4h4m-4 4h2"/>',
   overview: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.7"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.7"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.7"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.7"/>',
   ledger: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   tag: '<path d="M3 11.5V5a2 2 0 0 1 2-2h6.5l9 9a1.6 1.6 0 0 1 0 2.3l-6.2 6.2a1.6 1.6 0 0 1-2.3 0z"/><path d="M7.5 7.5h.01" stroke-width="3"/>',
@@ -31,7 +30,7 @@ export const escape = value => String(value ?? '').replace(/[&<>"']/g, char => (
 export const icon = (name, size = 19) => `<svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${paths[name] ?? categoryIconPaths(name)}</svg>`
 export const categoryArt = (name, size = 22, label) => `<span class="category-icon" data-tone="${categoryIconTone(name, label)}">
   <svg aria-hidden="true" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${categoryIconPaths(name)}</svg></span>`
-export const brand = extra => `<div class="brand ${extra}"><span class="brand-mark">${icon('logo', 22)}</span><span>${t('小日账')}</span></div>`
+export const brand = extra => `<div class="brand ${extra}"><img class="brand-mark" src="./icons/touch.png" alt="" width="30" height="30"><span>${t('小日账')}</span></div>`
 export const option = (value, label, selected) => `<option value="${escape(value)}"${String(value) === String(selected) ? ' selected' : ''}>${escape(label)}</option>`
 export const currencyOptions = selected => Object.entries(currencies).map(([value, label]) => option(value, t(label), selected)).join('')
 export const meterFill = (key, level, axis = 'x', className = '') => `<span class="meter-fill ${className}" data-meter="${escape(key)}"
