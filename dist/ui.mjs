@@ -153,11 +153,16 @@ export function transaction(entry, categories, reportCurrency, grouped = false, 
     ? `<small>${entry.currency}${showConverted ? ` · ${converted == null ? t('待换算') : t('约 {0}', money(converted, reportCurrency))}` : ''}</small>`
     : ''
   const picking = picked !== undefined
-  return `<button type="button" class="transaction${picking ? ' picking' : ''}" data-action="${picking ? 'toggle-select' : 'edit'}" data-value="${escape(entry.id)}"${picking ? ` aria-pressed="${picked}"` : ''}>
+  const id = escape(entry.id)
+  const row = `<button type="button" class="transaction${picking ? ' picking' : ''}" data-action="${picking ? 'toggle-select' : 'edit'}" data-value="${id}"${picking ? ` aria-pressed="${picked}"` : ''}>
     ${picking ? `<span class="pick-mark" aria-hidden="true">${icon('check', 14)}</span>` : ''}
     ${categoryArt(category?.icon ?? (entry.direction === 'transfer' ? 'transfer' : 'tag'), 22, category?.name)}
     <span class="txn-body"><strong class="txn-title">${escape(title)}</strong><span class="txn-meta">${escape(detail)}</span></span>
     <span class="txn-value ${entry.direction === 'income' ? 'benefit' : entry.direction === 'transfer' ? 'transfer' : ''}">${({ income: '+', expense: '−', transfer: '' })[entry.direction]}${money(entry.minor, entry.currency)}${note}</span></button>`
+  return picking ? row : `<div class="transaction-swipe">${row}
+    <button type="button" class="swipe-delete" data-action="delete-entry" data-value="${id}" inert>
+      ${icon('trash', 17)}<span>${t('删除')}</span>
+    </button></div>`
 }
 
 export function emptyLedger(isFiltered) {

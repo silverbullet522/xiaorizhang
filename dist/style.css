@@ -201,7 +201,20 @@ a.button { text-decoration: none }
   position: relative; width: 100%; min-height: 54px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 9px; align-items: center; padding: 7px var(--row-pad, 16px); border: 0; background: transparent; text-align: left;
 }
-.transaction + .transaction::before { content: ""; position: absolute; top: 0; right: 0; left: calc(var(--row-pad, 16px) + 43px); height: 1px; background: var(--line) }
+.transaction + .transaction::before, .transaction-swipe + .transaction-swipe > .transaction::before {
+  content: ""; position: absolute; top: 0; right: 0; left: calc(var(--row-pad, 16px) + 43px); height: 1px; background: var(--line);
+}
+.transaction-swipe { display: grid; grid-template-columns: 100% var(--swipe-width); overflow: hidden; --swipe-width: 76px }
+.transaction-swipe > * { transform: translateX(var(--swipe-offset, 0px)) }
+.transaction-swipe > .transaction { outline-offset: -3px; touch-action: pan-y pinch-zoom }
+.transaction-swipe.swipe-open { --swipe-offset: calc(-1 * var(--swipe-width)) }
+.swipe-delete {
+  display: grid; place-content: center; justify-items: center;
+  gap: 1px; padding: 0 4px; border: 0; background: var(--danger); color: var(--brand-ink); font-size: 13px; font-weight: 650;
+  touch-action: manipulation;
+}
+.swipe-delete:active { background: color-mix(in srgb, var(--danger) 88%, var(--ink)) }
+.swipe-delete:focus-visible { outline: 2px solid var(--brand-ink); outline-offset: -4px }
 .transaction.picking { grid-template-columns: auto auto minmax(0, 1fr) auto }
 .transaction.picking + .transaction.picking::before { left: calc(var(--row-pad, 16px) + 74px) }
 .transaction.picking[aria-pressed="true"] { background: color-mix(in srgb, var(--brand) 8%, transparent) }
@@ -702,9 +715,10 @@ body.selecting #main { padding-bottom: 110px }
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .button, .icon-button, .nav-link, .tab, .transaction, .period button, .category-icon, .key, .mobile-add, .due-reminder {
+  .button, .icon-button, .nav-link, .tab, .transaction, .swipe-delete, .period button, .category-icon, .key, .mobile-add, .due-reminder {
     transition: background-color .15s ease, color .15s ease, transform .15s ease;
   }
+  .swipe-dragging > * { transition: none }
   :is(.button, .key, .mobile-add):active:not(:disabled), :is(.entry-cat, .icon-choice):active .category-icon { transform: scale(.95) }
   #mobile-nav .nav-link > svg { transition: transform .18s ease }
   #mobile-nav .nav-link[aria-current="page"] > svg { transform: translateY(-2px) }

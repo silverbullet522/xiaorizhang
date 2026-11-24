@@ -41,6 +41,9 @@ let pendingBackup
 let noticeTimer
 let ratesTask
 let offlineReady = Boolean(navigator.serviceWorker?.controller)
+let swipedRow = null
+let entrySwipe = null
+let ignoreSwipeClick = false
 
 function toast(message, success = false) {
   clearTimeout(noticeTimer)
@@ -283,6 +286,7 @@ function ledgerTools() {
 function refreshLedgerResults() {
   const results = byId('ledger-results')
   if (!results) { render(); return }
+  resetEntrySwipe()
   results.innerHTML = ledgerResults()
   syncSelection()
 }
@@ -375,6 +379,7 @@ function render() {
   const previousReminder = allowsMotion.matches && state.view === 'home' && main.dataset.view === 'home'
     ? main.querySelector('.due-slot:not([data-leaving])') : null
   const reminderHeight = previousReminder?.getBoundingClientRect().height
+  resetEntrySwipe()
   chrome()
   main.innerHTML = ({ home, overview, categories: categoryPage, settings: settingsPage })[state.view]()
   main.dataset.view = state.view
@@ -411,6 +416,84 @@ function selectionBar() {
 function stopSelecting() {
   state.selecting = false
   state.selected.clear()
+}
+
+function showSwipedRow(row = null) {
+  if (swipedRow === row) return
+  if (swipedRow) {
+    const button = swipedRow.lastElementChild
+    if (document.activeElement === button) swipedRow.firstElementChild.focus({ preventScroll: true })
+    button.inert = true
+    swipedRow.classList.remove('swipe-open')
+  }
+  swipedRow = row
+  if (row) {
+    row.classList.add('swipe-open')
+    row.lastElementChild.inert = false
+  }
+}
+
+function clearEntryDrag() {
+  if (!entrySwipe) return
+  const { row } = entrySwipe
+  row.classList.remove('swipe-dragging')
+  row.style.removeProperty('--swipe-offset')
+  entrySwipe = null
+}
+
+function resetEntrySwipe() {
+  showSwipedRow()
+  clearEntryDrag()
+}
+
+function beginEntrySwipe(event) {
+  if (!event.isPrimary) { clearEntryDrag(); return }
+  ignoreSwipeClick = false
+  if (swipedRow && !swipedRow.contains(event.target)) showSwipedRow()
+  if (event.pointerType !== 'touch' || dialog.open) return
+  const control = event.target.closest('.transaction-swipe > button')
+  if (!control || control.inert || control.disabled) return
+  const row = control.parentElement
+  const width = row.lastElementChild.offsetWidth
+  entrySwipe = {
+    row, width, x: event.clientX, y: event.clientY, pointer: event.pointerId,
+    start: row === swipedRow ? -width : 0, dragging: false,
+    deleteButton: control === row.lastElementChild ? control : null
+  }
+}
+
+function moveEntrySwipe(event) {
+  const swipe = entrySwipe
+  if (!swipe || swipe.pointer !== event.pointerId) return
+  const dx = event.clientX - swipe.x
+  if (!swipe.dragging) {
+    const dy = Math.abs(event.clientY - swipe.y)
+    if (Math.max(Math.abs(dx), dy) < 9) return
+    if (swipe.deleteButton || Math.abs(dx) <= dy * 1.25 || (dx > 0 && swipe.start === 0)) { clearEntryDrag(); return }
+    swipe.dragging = true
+    swipe.row.classList.add('swipe-dragging')
+  }
+  const offset = Math.max(-swipe.width, Math.min(0, swipe.start + dx))
+  swipe.row.style.setProperty('--swipe-offset', `${offset}px`)
+}
+
+function finishEntrySwipe(event) {
+  const swipe = entrySwipe
+  if (!swipe || swipe.pointer !== event.pointerId) return
+  if (event.type === 'pointerup') {
+    if (swipe.dragging) {
+      ignoreSwipeClick = true
+      const offset = swipe.start + event.clientX - swipe.x
+      showSwipedRow(offset < -swipe.width / 2 ? swipe.row : null)
+    } else if (swipe.deleteButton && swipe.row === swipedRow &&
+      Math.hypot(event.clientX - swipe.x, event.clientY - swipe.y) < 9 &&
+      swipe.deleteButton.contains(document.elementFromPoint(event.clientX, event.clientY))) {
+      // Browsers can skip the compatibility click just after the row moves.
+      ignoreSwipeClick = true
+      swipe.deleteButton.click()
+    }
+  }
+  clearEntryDrag()
 }
 
 // Categories belong to one direction, so a mixed selection changes one direction at a time.
@@ -494,6 +577,7 @@ function go(view, focusLedger = false) {
 }
 
 function openDialog(title, content, layout = '') {
+  resetEntrySwipe()
   const replacingEntry = dialog.open && layout === 'entry' && dialog.classList.contains('entry-sheet')
   dialog.classList.toggle('wide', layout === 'wide')
   dialog.classList.toggle('entry-sheet', layout === 'entry')
@@ -1688,12 +1772,15 @@ const actions = {
   'screen-input': () => showScreenInput(),
   'screen-read': readScreenClipboard,
   'screen-guide': openScreenGuide,
-  'delete-entry': async ({ value }) => {
+  'delete-entry': async ({ value }, control) => {
     if (!confirm(t('删除这笔流水？'))) return
-    await deleteEntry(value)
-    dialog.close()
-    await reload()
-    toast(t('流水已删除'))
+    control.disabled = true
+    try {
+      await deleteEntry(value)
+      if (dialog.open && byId('entry-form')?.dataset.id === value) dialog.close()
+      await reload()
+      toast(t('流水已删除'))
+    } finally { control.disabled = false }
   },
   'select-mode': () => {
     const starting = !state.selecting
@@ -1912,7 +1999,14 @@ async function handleError(error) {
 
 document.addEventListener('click', event => {
   const control = event.target.closest('[data-action]')
-  if (!control || control.disabled) return
+  if (!control || control.disabled || control.inert) return
+  if (ignoreSwipeClick && event.detail && control.closest('.transaction-swipe')) {
+    // A touch that moved the row can still generate a click after release.
+    ignoreSwipeClick = false
+    event.preventDefault()
+    return
+  }
+  if (control === swipedRow?.firstElementChild) { showSwipedRow(); return }
   try { Promise.resolve(actions[control.dataset.action]?.(control.dataset, control)).catch(handleError) }
   catch (error) { handleError(error) }
 })
@@ -2084,7 +2178,10 @@ document.addEventListener('visibilitychange', () => {
 document.addEventListener('keydown', event => {
   if (event.isComposing || event.keyCode === 229 || dialog.open) return
   if (event.key === 'Escape') {
-    if (state.ledgerSearchOpen && ['ledger-search', 'ledger-search-toggle'].includes(event.target.id)) {
+    if (swipedRow) {
+      event.preventDefault()
+      resetEntrySwipe()
+    } else if (state.ledgerSearchOpen && ['ledger-search', 'ledger-search-toggle'].includes(event.target.id)) {
       event.preventDefault()
       setLedgerSearchOpen(false)
     } else if (state.ledgerCategoriesOpen && (event.target.id === 'ledger-category-toggle' || byId('ledger-category-picker')?.contains(event.target))) {
@@ -2122,7 +2219,11 @@ main.addEventListener('input', event => {
 
 document.addEventListener('pointerdown', event => {
   if (!byId('quick-paste').hidden && !event.target.closest('#quick-paste')) hidePaste()
+  beginEntrySwipe(event)
 })
+document.addEventListener('pointermove', moveEntrySwipe, { passive: true })
+document.addEventListener('pointerup', finishEntrySwipe)
+document.addEventListener('pointercancel', finishEntrySwipe)
 setInterval(() => {
   if (!document.hidden && navigator.onLine) refreshRates().catch(handleError)
 }, 5 * 60 * 1000)
