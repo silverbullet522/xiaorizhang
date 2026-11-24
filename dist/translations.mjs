@@ -189,6 +189,8 @@ export const messages = {
   '删除一位': ['刪除一位', '1 桁削除', 'Delete last digit'],
   '再记一笔': ['再記一筆', '続けて記録', 'Save & add'],
   '小数点': ['小數點', '小数点', 'Decimal point'],
+  '加号': ['加號', '足す', 'Add'],
+  '减号': ['減號', '引く', 'Subtract'],
   '数字键盘': ['數字鍵盤', '数字キーパッド', 'Numeric keypad'],
   '清空': ['清空', 'クリア', 'Clear'],
   '保存流水': ['儲存流水', '明細を保存', 'Save transaction'],

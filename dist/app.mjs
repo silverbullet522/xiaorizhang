@@ -1,5 +1,5 @@
 import {
-  amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, planBackupRestore, statementColumns,
+  amountExpressionMinor, amountMinor, dateTime, directions, duplicatePreviews, importRows, money, monthBounds, offsetDate, planBackupRestore, statementColumns,
   restorePlanSignature, summarize, tokyoNow, withQuotes, within
 } from './core.mjs'
 import {
@@ -715,10 +715,13 @@ function openEntry(id, screen, scheduled) {
     <div class="entry-amount">
       <span class="entry-symbol" aria-hidden="true">${currency === 'USD' ? '$' : currency ? '¥' : ''}</span>
       <label class="entry-amount-input"><span class="sr-only">${t('金额')}</span>
-        <input name="amount" inputmode="none" value="${escape(amount)}" autocomplete="off" maxlength="24" placeholder="0" required></label>
+        <input name="amount" inputmode="none" value="${escape(amount)}" autocomplete="off" maxlength="64" placeholder="0" required></label>
       <label class="entry-currency"><span class="sr-only">${t('币种')}</span><select class="control" name="currency" required>${choices}</select></label>
     </div>
-    <div class="fx" id="fx-preview" aria-live="polite"></div>
+    <div class="entry-amount-feedback" hidden>
+      <div class="fx" id="fx-preview" aria-live="polite"></div>
+      <button class="plain entry-clear" type="button" data-action="entry-key" data-value="clear">${t('清空')}</button>
+    </div>
     <section class="entry-categories category-picker" aria-label="${t('选择分类')}">
       <input type="hidden" name="category">
       <div class="entry-category-heading"><h3>${t('分类')}</h3><span class="entry-category-name"></span></div>
@@ -743,11 +746,11 @@ function openEntry(id, screen, scheduled) {
 }
 
 function keypad(single) {
-  const key = (value, glyph = '', label = '') => `<button class="key" type="button" data-action="entry-key" data-value="${value}"${label ? ` aria-label="${label}"` : ''}>${glyph ? icon(glyph, 20) : value}</button>`
+  const key = (value, glyph = '', label = '') => `<button class="key" type="button" data-action="entry-key" data-value="${value}"${label ? ` aria-label="${label}"` : ''}>${glyph ? icon(glyph, 20) : value === '-' ? '−' : value}</button>`
   return `<div class="entry-keypad" aria-label="${t('数字键盘')}">
     ${['7', '8', '9'].map(value => key(value)).join('')}${key('erase', 'erase', t('删除一位'))}
-    ${['4', '5', '6'].map(value => key(value)).join('')}<button class="key key-clear" type="button" data-action="entry-key" data-value="clear">${t('清空')}</button>
-    ${['1', '2', '3'].map(value => key(value)).join('')}
+    ${['4', '5', '6'].map(value => key(value)).join('')}${key('-', '', t('减号'))}
+    ${['1', '2', '3'].map(value => key(value)).join('')}${key('+', '', t('加号'))}
     <button type="submit" class="key key-save" aria-label="${t('保存流水')}">${t('保存')}</button>
     ${single ? '<span></span>' : `<button class="key key-repeat" type="submit" value="repeat">${t('再记一笔')}</button>`}
     ${key('0')}${key('.', '', t('小数点'))}
@@ -762,22 +765,32 @@ function updateEntryCurrency(form) {
 
 function pressEntryKey(form, value) {
   const input = form.elements.amount
-  if (value === 'erase') input.value = input.value.slice(0, -1)
-  else if (value === 'clear') input.value = ''
-  else if (value === '.') {
-    if (!input.value.includes('.')) input.value = (input.value || '0') + '.'
-  } else if (input.value.length < input.maxLength && (input.value.split('.')[1]?.length ?? 0) < 2) {
-    input.value = (input.value === '0' ? '' : input.value) + value
+  const current = input.value.normalize('NFKC').trim()
+  const operand = current.split(/[+−-]/).at(-1)
+  let next = current
+  if (value === 'erase') next = current.slice(0, -1)
+  else if (value === 'clear') next = ''
+  else if (value === '+' || value === '-') {
+    const before = current.replace(/[+−-]$/, '').trimEnd()
+    if (/\d\.?$/.test(before)) next = before + (value === '-' ? '−' : '+')
+  } else if (value === '.') {
+    if (form.elements.currency.value !== 'JPY' && !operand.includes('.')) next = current + (operand ? '.' : '0.')
+  } else if ((operand.split('.')[1]?.length ?? 0) < 2) {
+    next = (operand === '0' ? current.slice(0, -1) : current) + value
+  }
+  if (next.length <= input.maxLength) {
+    input.value = next
+    input.setSelectionRange(next.length, next.length)
+    input.scrollLeft = input.scrollWidth
   }
   formError('')
   refreshEntryQuote(form, false)
 }
 
-function entryDraft(form) {
+function entryDraft(form, minor = amountExpressionMinor(form.elements.amount.value, form.elements.currency.value)) {
   const data = form.elements
   const at = dateTime(`${data.day.value}T${data.time.value}`)
   const currency = data.currency.value
-  const minor = amountMinor(data.amount.value, currency)
   if (!at || !currency || minor === null || minor <= 0) return null
   const previous = state.entries.find(item => item.id === form.dataset.id)
   const sameAmount = previous?.currency === currency && previous?.minor === minor
@@ -870,26 +883,32 @@ async function readScreenClipboard() {
 
 function quotePreview(form) {
   const text = byId('fx-preview')
-  text.hidden = !form.elements.amount.value.trim()
-  if (text.hidden) return
-  const draft = entryDraft(form)
+  const expression = form.elements.amount.value.trim()
+  const hasOperators = /[\d.]\s*[+−-]/.test(expression.normalize('NFKC'))
+  form.classList.toggle('has-amount-expression', hasOperators)
+  text.parentElement.hidden = !expression
+  if (!expression) { text.textContent = ''; return }
   const selected = form.elements.currency.value
   if (!selected) {
     text.textContent = t('选择币种后查看换算')
     return
   }
+  const minor = amountExpressionMinor(expression, selected)
+  const calculation = minor !== null && hasOperators
+    ? `<strong class="entry-calculation">= ${money(minor, selected)}</strong>` : ''
+  const draft = entryDraft(form, minor)
   const available = quotesFor(form.elements.day.value)
   const rateLabel = draft?.fx.CNY ?? available.CNY
   if (!draft) {
-    text.innerHTML = rateLabel ? `1 JPY ≈ ${rateLabel.rate} CNY<small>${t('参考汇率 · {0}', rateLabel.date)}</small>`
-      : t('输入金额后查看换算')
+    text.innerHTML = calculation || (rateLabel ? `1 JPY ≈ ${rateLabel.rate} CNY<small>${t('参考汇率 · {0}', rateLabel.date)}</small>`
+      : t('输入金额后查看换算'))
     return
   }
   const estimates = []
   if (selected !== 'JPY') estimates.push(draft.yen == null ? t('日元待换算') : `${draft.settlementYen != null ? t('日元实扣 ') : t('约 ')}${money(draft.yen, 'JPY')} JPY`)
   if (selected !== 'CNY') estimates.push(draft.yuan == null ? t('人民币待换算') : t('约 {0} CNY', money(draft.yuan, 'CNY')))
   const dates = [...new Set(Object.values(draft.fx).map(item => item.date))]
-  text.innerHTML = `${estimates.join(' · ')}${dates.length ? `<small>${t('参考汇率日期 · {0}', dates.join(' / '))}</small>` : `<small>${t('如需参考汇率，联网后会自动补齐')}</small>`}`
+  text.innerHTML = `${calculation}${estimates.join(' · ')}${dates.length ? `<small>${t('参考汇率日期 · {0}', dates.join(' / '))}</small>` : `<small>${t('如需参考汇率，联网后会自动补齐')}</small>`}`
 }
 
 function refreshEntryQuote(form, network) {

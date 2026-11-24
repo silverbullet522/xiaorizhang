@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, monthBounds, planBackupRestore, presetRenames, summarize, tokyoNow, withQuotes, within
+  amountExpressionMinor, amountMinor, csvRows, dateTime, defaults, duplicatePreviews, importRows, monthBounds, planBackupRestore,
+  presetRenames, summarize, tokyoNow, withQuotes, within
 } from '../dist/core.mjs'
 import { iconNames } from '../dist/icons.mjs'
 
@@ -93,6 +94,21 @@ test('金额使用币种最小单位并保留已保存的换算', () => {
   assert.equal(first.yen, 203)
   assert.equal(first.yuan, 1013)
   assert.deepEqual(withQuotes(first, { CNY: { rate: 0.06, date: '2026-11-19' } }), first)
+})
+
+test('记账金额支持连续加减，并按币种最小单位精确计算', () => {
+  assert.equal(amountExpressionMinor('1,200 + ３５０ − 100', 'JPY'), 1450)
+  assert.equal(amountExpressionMinor('0.10+0.20', 'CNY'), 30)
+  assert.equal(amountExpressionMinor('25.-0.45+2.05', 'USD'), 2660)
+  assert.equal(amountExpressionMinor('100-100', 'JPY'), 0)
+  assert.equal(amountExpressionMinor('100-200', 'JPY'), -100)
+  assert.equal(amountExpressionMinor('¥1,020.50', 'CNY'), amountMinor('¥1,020.50', 'CNY'))
+  assert.equal(amountExpressionMinor('1.01+2', 'JPY'), null)
+  assert.equal(amountExpressionMinor('0.001+2', 'CNY'), null)
+  assert.equal(amountExpressionMinor('500+', 'JPY'), null)
+  assert.equal(amountExpressionMinor('500+-100', 'JPY'), null)
+  assert.equal(amountExpressionMinor('5*2', 'JPY'), null)
+  assert.equal(amountExpressionMinor('1000000000000+1', 'JPY'), null)
 })
 
 test('日文账单保留海外原币并只将实扣额计入日元统计', () => {

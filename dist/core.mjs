@@ -83,6 +83,8 @@ export function currencyCode(value) {
   return null
 }
 
+const maxMinor = 1e12
+
 export function amountMinor(value, currency) {
   const normalized = String(value ?? '').normalize('NFKC').trim().replace(/^[¥$]\s*/, '')
   if (!/^[+-]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(normalized)) return null
@@ -90,8 +92,22 @@ export function amountMinor(value, currency) {
   const precision = currency === 'JPY' ? 0 : 2
   if (/[1-9]/.test(fraction.slice(precision))) return null
   const amount = Number(whole + fraction.slice(0, precision).padEnd(precision, '0'))
-  if (!Number.isSafeInteger(amount) || amount > 1e12) return null
+  if (!Number.isSafeInteger(amount) || amount > maxMinor) return null
   return normalized.startsWith('-') ? -amount : amount
+}
+
+export function amountExpressionMinor(value, currency) {
+  const text = String(value ?? '').normalize('NFKC').trim().replaceAll('−', '-').replace(/^[¥$]\s*/, '')
+  const parts = text.replace(/^[+-]/, '').split(/([+-])/)
+  let total = 0
+  for (let i = 0; i < parts.length; i += 2) {
+    const amount = amountMinor(parts[i].trim().replace(/\.$/, ''), currency)
+    if (amount === null) return null
+    const sign = i === 0 ? text[0] : parts[i - 1]
+    total += sign === '-' ? -amount : amount
+    if (!Number.isSafeInteger(total)) return null
+  }
+  return Math.abs(total) <= maxMinor ? total : null
 }
 
 const formatNumber = {
