@@ -896,7 +896,7 @@ function entryDraft(form, minor = amountExpressionMinor(form.elements.amount.val
 function openScreenGuide() {
   openDialog(t('配置 iPhone 快捷指令'), `<div class="form-grid">
     <ol class="setup-steps">
-      <li>${t('打开{0}，按提示添加。', `<a href="https://www.icloud.com/shortcuts/a3f25a035d3344d0b328a22d3a278ace" target="_blank" rel="noopener">${t('屏幕记账快捷指令')}</a>`)}</li>
+      <li>${t('打开{0}，按提示添加。', `<a href="https://www.icloud.com/shortcuts/5c81ff9b141b47b0bb4c26487117fa79" target="_blank" rel="noopener">${t('屏幕记账快捷指令')}</a>`)}</li>
       <li>${t('在 iPhone「设置」进入「辅助功能」→「触控」→「轻点背面」→「轻点两下」，选择这个快捷指令。')}</li>
       <li>${t('在付款或收款详情上轻点背面两下，手机会回到主屏幕。打开小日账，点底部弹出的「粘贴屏幕账单」，再点系统的「粘贴」。')}</li>
       <li>${t('金额、币种、时间、商户会自动填好；同一商户会沿用上次的分类，常见店铺也会自动选分类。核对后点「保存」。')}</li>
