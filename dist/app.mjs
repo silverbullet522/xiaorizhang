@@ -8,7 +8,8 @@ import {
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import {
-  authorizeDrive, configureDrive, driveEvents, driveStatus, initializeDrive, pauseDrive, prepareGoogle, queueDriveSync, syncDriveNow
+  authorizeDrive, configureDrive, configureDriveService, driveEvents, driveStatus, initializeDrive, pauseDrive, prepareGoogle,
+  queueDriveSync, removeDriveService, syncDriveNow
 } from './drive-sync.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { allowsMotion, animateCategory, playMotion, readMeters, transitionMeters } from './motion.mjs'
@@ -1282,11 +1283,13 @@ const driveMessages = {
   authorizing: '等待 Google 授权…',
   denied: 'Google 授权未完成，请重试。',
   syncing: '正在同步账本…',
+  renewing: '正在续期 Google Drive 授权…',
   synced: '已同步',
   paused: '已暂停同步，本机仍可记账。',
   offline: '离线中，联网后会继续同步。',
   error: '同步暂未完成，本机数据已保留。',
   'google-unavailable': '暂时无法连接 Google，请重试。',
+  'auth-service-error': '暂时无法连接授权服务，本机数据已保留。',
   'wrong-account': '请选择原来同步的 Google 账号。',
   'invalid-cloud': '云端账本无法读取，请保留本机备份。'
 }
@@ -1305,11 +1308,18 @@ function paintDriveSettings() {
   if (!status) return
   status.textContent = driveSummary()
   byId('drive-account').textContent = driveStatus.email
-  const { authorized, clientId, phase, ready } = driveStatus
-  const busy = phase === 'authorizing' || phase === 'syncing'
+  const { authorized, clientId, phase, ready, serviceUrl, paused, needsConsent } = driveStatus
+  const busy = phase === 'renewing' || phase === 'syncing' || (phase === 'authorizing' && !serviceUrl)
   const form = byId('drive-config-form')
-  form.hidden = driveStatus.linked
-  byId('drive-buttons').innerHTML = clientId
+  form.hidden = driveStatus.linked || Boolean(serviceUrl)
+  byId('drive-service-form').hidden = Boolean(serviceUrl)
+  byId('drive-service-info').hidden = !serviceUrl
+  byId('drive-service-address').textContent = serviceUrl
+  byId('drive-buttons').innerHTML = serviceUrl ? `
+    ${!paused && !needsConsent ? button('drive-pause', t('暂停同步')) : ''}
+    ${paused ? button('drive-authorize', t('恢复同步'), '', '', 'primary') : authorized || busy || (!needsConsent && phase === 'auth-service-error')
+      ? button('drive-now', t('立即同步'), busy ? 'disabled' : '', '', 'primary')
+      : button('drive-authorize', t('授权并开启自动同步'), '', '', 'primary')}` : clientId
     ? `${authorized || busy ? button('drive-pause', t('暂停同步')) : ''}
       ${authorized ? button('drive-now', t('立即同步'), busy ? 'disabled' : '', '', 'primary')
         : button('drive-authorize', t(ready ? '连接 Google Drive' : '加载 Google 授权'), busy ? 'disabled' : '', '', 'primary')}`
@@ -1323,12 +1333,37 @@ function openDriveSettings() {
     <form id="drive-config-form" class="form-grid">
       ${field(t('Google OAuth 客户端 ID'), `<input name="client" required type="text" spellcheck="false" autocapitalize="none" autocomplete="off" value="${escape(driveStatus.clientId)}">`)}
       <p class="fine"><a href="https://github.com/silverbullet522/xiaorizhang#google-drive-同步" target="_blank" rel="noopener">${t('客户端 ID 配置说明')}</a></p>
-      ${errorPlaceholder}<div class="form-footer">${submitButton(t('保存客户端 ID'))}</div>
+      <div class="form-footer">${submitButton(t('保存客户端 ID'))}</div>
     </form>
     <div id="drive-buttons" class="form-footer"></div>
+    <details${driveStatus.serviceUrl ? ' open' : ''}>
+      <summary>${t('自动续期设置')}</summary>
+      <form id="drive-service-form" class="form-grid">
+        <p class="fine">${t('配置授权服务后，首次授权完成即可在打开应用时自动同步。')}</p>
+        ${field(t('授权服务地址'), '<input name="service" type="url" required placeholder="https://…run.app" spellcheck="false" autocapitalize="none" autocomplete="off">')}
+        <div class="form-footer">${submitButton(t('保存授权服务'))}</div>
+      </form>
+      <div id="drive-service-info" class="form-grid" hidden>
+        <p class="fine" id="drive-service-address"></p>
+        <div class="form-footer">${button('drive-remove-service', t('移除此设备的自动续期'), '', '', 'subtle')}</div>
+      </div>
+    </details>
+    ${errorPlaceholder}
   </div>`)
   paintDriveSettings()
   prepareGoogle()
+}
+
+async function submitDriveService(form) {
+  const result = await configureDriveService(form.elements.service.value)
+  if (byId('drive-service-form') !== form) return
+  const errors = {
+    'invalid-url': '请输入完整的 HTTPS 授权服务地址。',
+    unavailable: '无法连接授权服务，请检查服务地址和部署状态。',
+    'wrong-client': '授权服务须使用当前账本绑定的 Google OAuth 客户端 ID。'
+  }
+  if (result !== 'ok') formError(t(errors[result]))
+  else form.reset()
 }
 
 function submitDriveConfig(form) {
@@ -1921,6 +1956,12 @@ const actions = {
   'drive-authorize': authorizeDrive,
   'drive-pause': pauseDrive,
   'drive-now': syncDriveNow,
+  'drive-remove-service': async (_, control) => {
+    control.disabled = true
+    try {
+      if (!await removeDriveService()) formError(t('暂时无法移除授权服务，请联网重试。'))
+    } finally { control.disabled = false }
+  },
   'export-backup-range': () => openDataRange('export'),
   'export-csv': () => openDataRange('csv'),
   'manage-feature': ({ value }) => manageFeature(value),
@@ -2013,6 +2054,7 @@ document.addEventListener('click', event => {
 
 const forms = {
   'drive-config-form': submitDriveConfig,
+  'drive-service-form': submitDriveService,
   'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
   'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger, 'feature-form': submitFeature,
   'screen-form': form => applyScreenText(form.elements.screenText.value)
@@ -2168,6 +2210,7 @@ function updateConnectivity() {
 }
 window.addEventListener('online', updateConnectivity)
 window.addEventListener('offline', updateConnectivity)
+window.addEventListener('pageshow', event => { if (event.persisted) queueDriveSync(0) })
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); hidePaste(); return }
   // Coming back from another app usually means a shortcut just copied a payment screen.

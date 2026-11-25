@@ -45,6 +45,22 @@
 
 同一笔流水在多台设备上被修改时，保留同步版本较新的修改。分类和账本设置作为一组同步。连接过同步的账本执行「清除所有数据」后，下次同步也会清除云端账本。
 
+#### 打开时自动续期
+
+授权服务用同一个 OAuth 网页客户端为 Google Drive 续期。刷新令牌加密保存在 Firestore，OAuth 客户端密钥和加密密钥由 Secret Manager 保存。小日账直接向 Google Drive 读写流水。Cloud Run 部署需要 Google Cloud 项目已关联结算账号。[Cloud Run 从源码部署](https://cloud.google.com/run/docs/deploying-source-code)
+
+1. 在原 OAuth 客户端所在项目打开 [Google Cloud Shell](https://shell.cloud.google.com/)。克隆仓库并运行以下命令，把 `YOUR_PROJECT_ID` 换成项目 ID 或编号。脚本默认部署到东京区域。首次运行时，在 Cloud Shell 提示中填写 OAuth 客户端 ID、授权账号邮箱和客户端密钥。重复部署会复用已设的 Secret Manager 密钥。若旧客户端密钥未保存，可在原客户端详情里点「添加密钥」，再把新密钥输入 Cloud Shell。[Google 客户端密钥说明](https://support.google.com/cloud/answer/15549257)
+
+   ```bash
+   git clone https://github.com/silverbullet522/xiaorizhang.git
+   cd xiaorizhang
+   bash drive-auth/deploy.sh YOUR_PROJECT_ID
+   ```
+
+2. 打开 [Google Auth Platform 客户端](https://console.cloud.google.com/auth/clients)，在原网页客户端的「已获授权的重定向 URI」中添加脚本输出的完整 `/oauth/callback` 地址并保存。
+3. 在 iPhone 主屏幕打开小日账，进入「设置 → 数据与备份 → Google Drive 同步 → 自动续期设置」，填入脚本输出的 Cloud Run 服务地址，点「保存授权服务」，再点「授权并开启自动同步」。用原来的 Google 账号完成授权。若授权页在 Safari 打开，完成后回到主屏幕小日账。
+4. 以后打开应用、切回前台或重新联网会尝试同步。暂停后可点「恢复同步」。移除此设备的自动续期会删除该设备在授权服务中的凭据。Google 授权被撤销或刷新令牌失效后，可以重新授权。
+
 ## 开发
 
 应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析，分类图标来自 Lucide（ISC，见 `dist/vendor/LICENSE.lucide.txt`）。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。

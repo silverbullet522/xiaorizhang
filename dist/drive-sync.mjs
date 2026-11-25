@@ -7,11 +7,15 @@ const uploadUrl = 'https://www.googleapis.com/upload/drive/v3'
 const name = 'xiaorizhang-ledger-sync.json'
 const preference = 'hiba-drive-client'
 const sessionKey = 'hiba-drive-session'
+const serviceKey = 'hiba-drive-authorization'
 const validClient = value => typeof value === 'string' && /^[a-z0-9_-]{1,200}\.apps\.googleusercontent\.com$/i.test(value)
 
 export const driveEvents = new EventTarget()
-export const driveStatus = { clientId: '', linked: false, email: '', ready: false, authorized: false, phase: 'idle', time: null }
+export const driveStatus = { clientId: '', linked: false, email: '', ready: false, authorized: false, phase: 'idle', time: null,
+  serviceUrl: '', paused: false, needsConsent: false }
 let session
+let automatic
+let boundAccount = ''
 let googleTask
 let syncTask
 let timer
@@ -27,7 +31,7 @@ function setSession(value) {
   session = value ? { ...value, controller: new AbortController() } : null
   driveStatus.authorized = Boolean(session)
   try {
-    if (value) sessionStorage.setItem(sessionKey, JSON.stringify(value))
+    if (value && !value.automatic) sessionStorage.setItem(sessionKey, JSON.stringify(value))
     else sessionStorage.removeItem(sessionKey)
   } catch { /* Synchronization remains available for this page session. */ }
 }
@@ -36,26 +40,162 @@ function showBinding(sync) {
   driveStatus.linked = Boolean(sync)
   driveStatus.email = sync?.email ?? ''
   if (sync) driveStatus.clientId = sync.clientId
+  boundAccount = sync?.account ?? ''
+}
+
+function serviceUrl(value) {
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'https:' && url.href === url.origin + '/') return url.origin
+  } catch { /* A complete HTTPS service address is required. */ }
+  return ''
+}
+
+function showService(service) {
+  automatic = service
+  driveStatus.serviceUrl = service?.url ?? ''
+  driveStatus.paused = Boolean(service?.paused)
+  driveStatus.needsConsent = false
+  if (service) driveStatus.clientId = service.clientId
+}
+
+function saveService(service) {
+  if (service) localStorage.setItem(serviceKey, JSON.stringify(service))
+  else localStorage.removeItem(serviceKey)
+  showService(service)
 }
 
 export async function initializeDrive() {
   const { sync } = await readDriveState()
+  showBinding(sync)
   try {
     const clientId = localStorage.getItem(preference)
-    if (validClient(clientId)) driveStatus.clientId = clientId
+    if (!sync && validClient(clientId)) driveStatus.clientId = clientId
+    const service = JSON.parse(localStorage.getItem(serviceKey))
+    if (service && serviceUrl(service.url) === service.url && validClient(service.clientId) &&
+        /^[A-Za-z0-9_-]{43}$/.test(service.device) && (!sync || sync.clientId === service.clientId)) showService(service)
     const stored = JSON.parse(sessionStorage.getItem(sessionKey))
-    if (stored?.clientId === (sync?.clientId ?? driveStatus.clientId) && stored.token && stored.expires > Date.now()) {
+    if (!automatic && stored?.clientId === driveStatus.clientId && stored.token && stored.expires > Date.now()) {
       setSession(stored)
     }
   } catch { /* Unavailable storage or an expired session requires authorization. */ }
-  showBinding(sync)
-  report(session ? 'idle' : sync ? 'authorize' : 'idle')
+  const url = new URL(location.href)
+  const outcome = url.searchParams.get('drive_auth')
+  if (outcome) {
+    url.searchParams.delete('drive_auth')
+    history.replaceState(history.state, '', url)
+  }
+  if (automatic && !automatic.paused && ['denied', 'wrong-account', 'service-error'].includes(outcome)) {
+    driveStatus.needsConsent = true
+    report(outcome === 'service-error' ? 'auth-service-error' : outcome)
+    return
+  }
+  report(automatic?.paused ? 'paused' : session || automatic ? 'idle' : sync ? 'authorize' : 'idle')
   queueDriveSync()
+}
+
+async function serviceRequest(url, path, method = 'GET', secret) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15000)
+  try {
+    const response = await fetch(url + path, { method, signal: controller.signal, credentials: 'omit', redirect: 'error',
+      cache: 'no-store', referrerPolicy: 'no-referrer', headers: secret ? { Authorization: 'Bearer ' + secret } : {} })
+    return { status: response.status, ok: response.ok, data: response.ok && response.status !== 204 ? await response.json() : null }
+  } finally { clearTimeout(timeout) }
+}
+
+export async function configureDriveService(value) {
+  const url = serviceUrl(value.trim())
+  if (!url || automatic) return 'invalid-url'
+  let config
+  try {
+    const response = await serviceRequest(url, '/v1/config')
+    if (!response.ok) return 'unavailable'
+    config = response.data
+  } catch { return 'unavailable' }
+  if (config?.version !== 1 || !validClient(config.clientId)) return 'unavailable'
+  if (driveStatus.linked && config.clientId !== driveStatus.clientId) return 'wrong-client'
+  const device = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+    .replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '')
+  saveService({ url, clientId: config.clientId, device, paused: false, pendingUntil: 0 })
+  setSession(null)
+  driveStatus.needsConsent = true
+  report('idle')
+  return 'ok'
+}
+
+export async function removeDriveService() {
+  if (!automatic) return true
+  const current = automatic
+  if (!current.paused) pauseDrive()
+  try {
+    const response = await serviceRequest(current.url, '/v1/session', 'DELETE', current.device)
+    if (!response.ok) return false
+    if (automatic?.device === current.device) {
+      saveService(null)
+      if (!driveStatus.linked) driveStatus.clientId = localStorage.getItem(preference) ?? ''
+      report(driveStatus.clientId ? 'authorize' : 'idle')
+      prepareGoogle()
+    }
+    return true
+  } catch { return false }
+}
+
+function startServiceAuthorization() {
+  if (automatic.paused) {
+    saveService({ ...automatic, paused: false })
+    queueDriveSync(0)
+    return
+  }
+  saveService({ ...automatic, pendingUntil: Date.now() + 600000 })
+  setSession(null)
+  report('authorizing')
+  // A top-level POST lets OAuth use a first-party state cookie, even when Safari blocks third-party cookies.
+  const form = document.createElement('form')
+  form.action = automatic.url + '/oauth/connect'
+  form.method = 'POST'
+  form.hidden = true
+  for (const [name, value] of Object.entries({ device: automatic.device, account: boundAccount })) {
+    const input = document.createElement('input')
+    Object.assign(input, { name, value, type: 'hidden' })
+    form.append(input)
+  }
+  document.body.append(form)
+  form.submit()
+  form.remove()
+}
+
+async function renewDriveSession(current) {
+  try {
+    report('renewing')
+    const response = await serviceRequest(current.url, '/v1/token', 'POST', current.device)
+    if (automatic !== current) return
+    if (response.status === 401) {
+      if (current.pendingUntil > Date.now()) { report('authorizing'); return }
+      driveStatus.needsConsent = true
+      report('authorize')
+      return
+    }
+    if (!response.ok) throw new Error('Drive authorization service unavailable')
+    const result = response.data
+    if (!result?.accessToken || !Number.isFinite(result.expiresIn) || result.expiresIn <= 30 || !result.account) {
+      throw new Error('Invalid Drive session')
+    }
+    if (boundAccount && result.account !== boundAccount) {
+      driveStatus.needsConsent = true
+      report('wrong-account')
+      return
+    }
+    if (current.pendingUntil) saveService({ ...current, pendingUntil: 0 })
+    setSession({ clientId: current.clientId, token: result.accessToken, automatic: true, expires: Date.now() + result.expiresIn * 1000 - 15000 })
+  } catch {
+    if (automatic === current) report(navigator.onLine ? 'auth-service-error' : 'offline')
+  }
 }
 
 export function configureDrive(clientId) {
   const value = clientId.trim()
-  if (!validClient(value) || (driveStatus.linked && value !== driveStatus.clientId)) return false
+  if (automatic || !validClient(value) || (driveStatus.linked && value !== driveStatus.clientId)) return false
   if (value !== driveStatus.clientId) {
     localStorage.setItem(preference, value)
     driveStatus.clientId = value
@@ -67,7 +207,7 @@ export function configureDrive(clientId) {
 }
 
 export function prepareGoogle() {
-  if (!driveStatus.clientId || !navigator.onLine || driveStatus.ready || googleTask) return
+  if (automatic || !driveStatus.clientId || !navigator.onLine || driveStatus.ready || googleTask) return
   googleTask = new Promise((resolve, reject) => {
     if (globalThis.google?.accounts?.oauth2) { resolve(); return }
     const script = document.createElement('script')
@@ -94,6 +234,7 @@ export function prepareGoogle() {
 
 export function authorizeDrive() {
   if (!navigator.onLine) { report('offline'); return }
+  if (automatic) { startServiceAuthorization(); return }
   if (!driveStatus.ready) { prepareGoogle(); return }
   const clientId = driveStatus.clientId
   const oauth = globalThis.google.accounts.oauth2
@@ -116,41 +257,59 @@ export function authorizeDrive() {
 }
 
 export function pauseDrive() {
+  if (automatic) saveService({ ...automatic, paused: true, pendingUntil: 0 })
   setSession(null)
   clearTimeout(timer)
   pending = false
   report('paused')
 }
 
+const driveCanSync = () => automatic ? !automatic.paused && !driveStatus.needsConsent : Boolean(session)
+
 export function queueDriveSync(delay = 500) {
-  if (!session) return
+  if (!driveCanSync()) return
   clearTimeout(timer)
   timer = setTimeout(syncDriveNow, delay)
 }
 
 export function syncDriveNow() {
-  if (!session) return
+  if (!driveCanSync()) return
   if (!navigator.onLine) { report('offline'); return }
-  if (session.expires <= Date.now()) { setSession(null); report('authorize'); return }
   if (syncTask) { pending = true; return syncTask }
-  const active = session
-  report('syncing')
-  syncTask = synchronize(active).then(() => {
-    if (session === active) {
-      driveStatus.time = new Date()
-      report('synced')
-    }
-  }).catch(error => {
-    if (session !== active) return
-    if (error.message === 'wrong-account' || error.status === 401) setSession(null)
-    const phase = !navigator.onLine ? 'offline' : error.status === 401 ? 'authorize' :
-      ['wrong-account', 'invalid-cloud'].includes(error.message) ? error.message : 'error'
-    report(phase)
-  }).finally(() => {
+  syncTask = synchronizeWithAuthorization().finally(() => {
     syncTask = null
     if (pending) { pending = false; queueDriveSync() }
   })
   return syncTask
+}
+
+async function synchronizeWithAuthorization() {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (session?.expires <= Date.now()) setSession(null)
+    if (!session) {
+      if (!automatic) { report('authorize'); return }
+      await renewDriveSession(automatic)
+      if (!session) return
+    }
+    const active = session
+    report('syncing')
+    try {
+      await synchronize(active)
+      if (session === active) {
+        driveStatus.time = new Date()
+        report('synced')
+      }
+    } catch (error) {
+      if (session !== active) return
+      if (error.message === 'wrong-account' || error.status === 401) setSession(null)
+      if (active.automatic && error.status === 401 && attempt === 0 && navigator.onLine) continue
+      if (active.automatic && (error.status === 401 || error.message === 'wrong-account')) driveStatus.needsConsent = true
+      const phase = !navigator.onLine ? 'offline' : error.status === 401 ? 'authorize' :
+        ['wrong-account', 'invalid-cloud'].includes(error.message) ? error.message : 'error'
+      report(phase)
+    }
+    return
+  }
 }
 
 function driveRequest(active, url, options = {}) {
@@ -235,7 +394,7 @@ async function synchronize(active) {
       revision, replica, clientId: active.clientId, account: about.permissionId, email: about.emailAddress ?? ''
     })
     if (!applied) continue
-    showBinding({ clientId: active.clientId, email: about.emailAddress ?? '' })
+    showBinding({ clientId: active.clientId, email: about.emailAddress ?? '', account: about.permissionId })
     if (applied.changed) driveEvents.dispatchEvent(new Event('ledger'))
     if (session !== active) return
 
