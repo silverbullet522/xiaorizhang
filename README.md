@@ -45,15 +45,6 @@
 
 同一笔流水在多台设备上被修改时，保留同步版本较新的修改。分类和账本设置作为一组同步。连接过同步的账本执行「清除所有数据」后，下次同步也会清除云端账本。
 
-### Gmail 邮件记账
-
-1. 在现有 Google Cloud 项目启用 [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)，在 Google Auth Platform 的数据访问权限中添加 `https://www.googleapis.com/auth/gmail.readonly`。使用个人模式时，通过项目创建者的账号连接。其他受众的验证和测试用户设置请参阅 [Google OAuth 验证说明](https://support.google.com/cloud/answer/13464323)。
-2. 在小日账进入「设置 → 邮件记账」，沿用前面配置的网页客户端 ID，点击「绑定 Gmail」。把银行、信用卡、支付平台或商户扣款通知中的发件邮箱逐一添加。
-3. 打开应用或切回前台时会检查新邮件。每个发件地址首次检查最近 7 天。Google 授权到期时，点击「继续检查」。
-4. 在首页打开「邮件扣款」，逐笔核对、忽略，或勾选多笔完整且无重复提示的草稿一起入账。常见的日文、中文、英文通知可提取 JPY、CNY 和 USD，格式有歧义时请对照邮件手动补全。
-
-邮件在浏览器内识别，待确认草稿只保存在当前设备。入账后的流水可通过已连接的 Google Drive 同步。详见 [邮件记账隐私说明](https://silverbullet522.github.io/xiaorizhang/privacy.html)。
-
 ## 开发
 
 应用源码直接放在 `dist/`，可作为静态站点部署，不需要额外构建。推送到 `main` 后，GitHub Actions 会把 `dist/` 发布到 [GitHub Pages](https://silverbullet522.github.io/xiaorizhang/)。发布静态资源变更时同步更新 `dist/sw.js` 的缓存版本和资源清单。汇率使用 Frankfurter v2，Excel 由随应用分发的 SheetJS 解析，分类图标来自 Lucide（ISC，见 `dist/vendor/LICENSE.lucide.txt`）。运行 `node --test` 验证日期、金额、换算、导入和统计逻辑。

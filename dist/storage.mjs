@@ -2,7 +2,6 @@ import { createImportMatcher, currencies, dateTime, defaults, directions, planBa
 import { iconNames } from './icons.mjs'
 import { billKey, findMerchantRule, firstUnpostedDate, merchantKey, nextBillDate, readFeatures, validFeature } from './features.mjs'
 import { sameLedger } from './sync-ledger.mjs'
-import { duplicateMailKeys, emptyMail, mergeMailScan } from './mail.mjs'
 
 export const ledgerChanges = new EventTarget()
 const ledgerStores = ['entries', 'categories', 'settings']
@@ -163,70 +162,17 @@ const withExistingCategory = (entry, categories) => entry.categoryId && categori
   ? { ...entry, categoryId: null }
   : entry
 
-const mailSetting = 'mailImport'
-
-export const readMail = () => transact(['settings'], 'readonly', (store, done) => {
-  const request = store('settings').get(mailSetting)
-  request.onsuccess = () => done(request.result ?? emptyMail())
-})
-
-export function updateMail(change, includeSaved = false) {
-  return transact(includeSaved ? ['settings', 'entries'] : ['settings'], 'readwrite', (store, done) => {
-    const settings = store('settings')
-    const keys = new Set()
-    if (includeSaved) {
-      // Only Gmail source keys are relevant; following the bounded index avoids reading entry contents.
-      const cursor = store('entries').index('sourceKey').openKeyCursor(IDBKeyRange.bound('gmail:', 'gmail:\uffff'))
-      cursor.onsuccess = () => {
-        if (cursor.result) { keys.add(cursor.result.key); cursor.result.continue() }
-        else apply()
-      }
-    } else apply()
-    function apply() {
-      const request = settings.get(mailSetting)
-      request.onsuccess = () => {
-        const current = request.result ?? emptyMail()
-        const next = change(current, keys)
-        if (next !== current) settings.put(next, mailSetting)
-        done(next)
-      }
-    }
-  }, false)
-}
-
-export const completeMailScan = (bindingId, scanned) => updateMail((current, keys) => mergeMailScan(current, bindingId, scanned, keys), true)
-
 export const saveEntry = (entry, merchant) => saveEntries([entry], merchant)
-export const saveMailEntries = (list, batch, merchant = null) => saveEntries(list, merchant, batch ? 'batch' : 'single')
-export const saveEntries = (list, merchant, mail) => transact(merchant || mail ? ledgerStores : ['entries', 'categories'], 'readwrite', (store, done) => {
+export const saveEntries = (list, merchant) => transact(merchant ? ['entries', 'categories', 'settings'] : ['entries', 'categories'], 'readwrite', (store, done) => {
   const entries = store('entries')
-  const existing = mail ? entries.getAll() : null
-  const settings = merchant || mail ? store('settings') : null
-  const mailbox = mail ? settings.get(mailSetting) : null
   const request = store('categories').getAll()
   request.onsuccess = () => {
     const categories = categoryDirections(request.result)
-    const current = mailbox ? mailbox.result ?? emptyMail() : null
-    let records = list
-    let processed
-    if (mail) {
-      const sources = new Set(existing.result.map(entry => entry.sourceKey))
-      const pending = new Set(current.drafts.map(draft => draft.sourceKey))
-      const suspects = mail === 'batch' ? duplicateMailKeys(current.drafts.filter(draft => !sources.has(draft.sourceKey)), existing.result) : new Set()
-      processed = new Set(list.filter(entry => pending.has(entry.sourceKey) && !suspects.has(entry.sourceKey)).map(entry => entry.sourceKey))
-      records = list.filter(entry => processed.has(entry.sourceKey) && !sources.has(entry.sourceKey))
-    }
     const writeEntries = () => {
-      if (!mail) {
-        for (const entry of records) entries.put(withExistingCategory(entry, categories))
-        return
-      }
-      for (const entry of records) entries.add(withExistingCategory(entry, categories))
-      if (processed.size) settings.put({ ...current, drafts: current.drafts.filter(item => !processed.has(item.sourceKey)),
-        handled: [...new Set([...current.handled, ...processed])] }, mailSetting)
-      done({ added: records.length, review: list.length - processed.size })
+      for (const entry of list) entries.put(withExistingCategory(entry, categories))
     }
-    if (!merchant || !records.length) { writeEntries(); return }
+    if (!merchant) { writeEntries(); return }
+    const settings = store('settings')
     const saved = settings.get('features')
     saved.onsuccess = () => {
       const features = readFeatures(saved.result, categories)
@@ -274,7 +220,7 @@ export function clearLedger() {
     const settings = store('settings')
     store('entries').clear()
     categories.clear()
-    for (const key of ['presets', 'currency', 'deletedPresets', 'features', mailSetting]) settings.delete(key)
+    for (const key of ['presets', 'currency', 'deletedPresets', 'features']) settings.delete(key)
     const linked = settings.get('driveSync')
     linked.onsuccess = () => {
       if (linked.result) settings.put(crypto.randomUUID(), 'driveReset')

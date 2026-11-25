@@ -1,6 +1,5 @@
 import { emptyReplica, equalData, mergeLedgerChanges, readReplica, replicaLedger } from './sync-ledger.mjs'
 import { applyDriveState, backupDocument, ledgerChanges, readDriveState, validateBackup } from './storage.mjs'
-import { loadGoogleOAuth, validGoogleClient } from './google-auth.mjs'
 
 const scope = 'https://www.googleapis.com/auth/drive.appdata'
 const driveUrl = 'https://www.googleapis.com/drive/v3'
@@ -8,6 +7,7 @@ const uploadUrl = 'https://www.googleapis.com/upload/drive/v3'
 const name = 'xiaorizhang-ledger-sync.json'
 const preference = 'hiba-drive-client'
 const sessionKey = 'hiba-drive-session'
+const validClient = value => typeof value === 'string' && /^[a-z0-9_-]{1,200}\.apps\.googleusercontent\.com$/i.test(value)
 
 export const driveEvents = new EventTarget()
 export const driveStatus = { clientId: '', linked: false, email: '', ready: false, authorized: false, phase: 'idle', time: null }
@@ -42,7 +42,7 @@ export async function initializeDrive() {
   const { sync } = await readDriveState()
   try {
     const clientId = localStorage.getItem(preference)
-    if (validGoogleClient(clientId)) driveStatus.clientId = clientId
+    if (validClient(clientId)) driveStatus.clientId = clientId
     const stored = JSON.parse(sessionStorage.getItem(sessionKey))
     if (stored?.clientId === (sync?.clientId ?? driveStatus.clientId) && stored.token && stored.expires > Date.now()) {
       setSession(stored)
@@ -55,7 +55,7 @@ export async function initializeDrive() {
 
 export function configureDrive(clientId) {
   const value = clientId.trim()
-  if (!validGoogleClient(value) || (driveStatus.linked && value !== driveStatus.clientId)) return false
+  if (!validClient(value) || (driveStatus.linked && value !== driveStatus.clientId)) return false
   if (value !== driveStatus.clientId) {
     localStorage.setItem(preference, value)
     driveStatus.clientId = value
@@ -68,7 +68,25 @@ export function configureDrive(clientId) {
 
 export function prepareGoogle() {
   if (!driveStatus.clientId || !navigator.onLine || driveStatus.ready || googleTask) return
-  googleTask = loadGoogleOAuth().then(() => {
+  googleTask = new Promise((resolve, reject) => {
+    if (globalThis.google?.accounts?.oauth2) { resolve(); return }
+    const script = document.createElement('script')
+    const cancel = setTimeout(() => fail(), 10000)
+    function fail() {
+      clearTimeout(cancel)
+      script.remove()
+      reject(new Error('google-unavailable'))
+    }
+    script.src = 'https://accounts.google.com/gsi/client'
+    script.async = true
+    script.onload = () => {
+      clearTimeout(cancel)
+      if (globalThis.google?.accounts?.oauth2) resolve()
+      else fail()
+    }
+    script.onerror = fail
+    document.head.append(script)
+  }).then(() => {
     driveStatus.ready = true
     report(driveStatus.phase === 'google-unavailable' ? 'idle' : driveStatus.phase)
   }).catch(() => report('google-unavailable')).finally(() => { googleTask = null })

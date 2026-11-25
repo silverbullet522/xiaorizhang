@@ -4,18 +4,12 @@ import {
 } from './core.mjs'
 import {
   addEntries, backupDocument, clearLedger, completeRates, deleteCategory, deleteEntries, deleteEntriesInRange, deleteEntry, readLedger, restoreLedger,
-  deleteFeature, postBill, saveCategory, saveCurrency, saveEntries, saveEntry, saveFeature, saveMailEntries, validateBackup
+  deleteFeature, postBill, saveCategory, saveCurrency, saveEntries, saveEntry, saveFeature, validateBackup
 } from './storage.mjs'
 import { clearQuoteCache, loadQuotes, quotesFor } from './rates.mjs'
 import {
   authorizeDrive, configureDrive, driveEvents, driveStatus, initializeDrive, pauseDrive, prepareGoogle, queueDriveSync, syncDriveNow
 } from './drive-sync.mjs'
-import { validGoogleClient } from './google-auth.mjs'
-import { duplicateMailKeys, mailAddress, mailDraftMinor } from './mail.mjs'
-import {
-  authorizeMail, changeMailSender, checkMailNow, disconnectMail, ignoreMailDraft, initializeMail, mailEvents,
-  mailStatus, prepareMailGoogle, refreshMail, resetMailSession
-} from './mail-sync.mjs'
 import { guessColumns, readFile } from './tables.mjs'
 import { allowsMotion, animateCategory, playMotion, readMeters, transitionMeters } from './motion.mjs'
 import { billCycles, billKey, budgetUsage, emptyFeatures, findMerchantRule, firstUnpostedDate, ledgerCsv, nextFutureBillDate } from './features.mjs'
@@ -176,7 +170,6 @@ function home() {
           </dl>
         </section>
         ${pendingBanner(totals.pending)}
-        <div id="mail-reminder" aria-live="polite">${mailBanner()}</div>
         ${reminder ? `<div class="due-slot">${reminder}</div>` : ''}${budgetPanel()}
       </div>
       <section class="book-activity" aria-labelledby="ledger-title">
@@ -776,7 +769,6 @@ const dayText = day => !dateTime(day) ? t('选择日期') : day === tokyoNow().s
 
 function openEntry(id, screen, scheduled) {
   const bill = scheduled?.bill
-  const mail = screen?.sourceKey
   const entry = state.entries.find(item => item.id === id)
   if (id && !entry) return
   hidePaste()
@@ -787,14 +779,14 @@ function openEntry(id, screen, scheduled) {
   const amount = original ? amountText(original.minor, currency) : screen?.amount ?? ''
   const direction = entry?.direction ?? screen?.direction ?? 'expense'
   const choices = (screen ? option('', t('请选择币种'), currency) : '') + currencyOptions(currency)
-  const directionChoices = directionsFor(direction).filter(([key]) => (!bill && !mail) || key === 'expense').map(([key, label]) => `<label class="entry-direction">
+  const directionChoices = directionsFor(direction).filter(([key]) => !bill || key === 'expense').map(([key, label]) => `<label class="entry-direction">
     <input class="sr-only" type="radio" name="direction" value="${key}"${direction === key ? ' checked' : ''}>
     <span>${label}</span></label>`).join('')
-  const title = bill ? t('确认固定账单') : entry ? t('编辑流水') : mail ? t('核对邮件扣款') : screen ? t('核对屏幕账单') : t('记一笔')
+  const title = bill ? t('确认固定账单') : entry ? t('编辑流水') : screen ? t('核对屏幕账单') : t('记一笔')
   openDialog(title, `<form id="entry-form" data-id="${entry?.id ?? ''}" data-bill="${escape(bill?.id)}"
-    data-due="${scheduled?.due ?? ''}" data-merchant="${escape(screen?.merchant)}" data-mail="${escape(mail)}">
+    data-due="${scheduled?.due ?? ''}" data-merchant="${escape(screen?.merchant)}">
     <div class="entry-content">
-    ${mail ? mailEntryNotice(screen) : screen ? screenNotice(screen) : ''}
+    ${screen ? screenNotice(screen) : ''}
     <div class="entry-toolbar">
       <fieldset class="entry-modes"><legend class="sr-only">${t('收支类型')}</legend>${directionChoices}</fieldset>
       <div class="entry-clock">
@@ -828,8 +820,7 @@ function openEntry(id, screen, scheduled) {
       ${entry ? icoButton('delete-entry', 'trash', t('删除流水'), `data-value="${entry.id}"`) : ''}
     </div>
     ${bill ? '' : `<div class="entry-footer-actions"><label class="switch-line"><input type="checkbox" name="rememberMerchant">${t('记住此商户的分类')}</label>
-      ${entry?.direction === 'expense' ? button('bill-from-entry', t('设为固定账单'), `data-value="${escape(entry.id)}"`, 'calendar', 'subtle') : ''}
-      ${mail ? button('mail-review', t('返回邮件列表'), '', '', 'subtle') : ''}</div>`}
+      ${entry?.direction === 'expense' ? button('bill-from-entry', t('设为固定账单'), `data-value="${escape(entry.id)}"`, 'calendar', 'subtle') : ''}</div>`}
     ${errorPlaceholder}</div>
     ${keypad(entry || screen || bill)}</form>`, 'entry')
   const form = byId('entry-form')
@@ -895,7 +886,7 @@ function entryDraft(form, minor = amountExpressionMinor(form.elements.amount.val
     note: data.note.value.trim(),
     settlementYen: sameAmount ? previous.settlementYen : null,
     sourceRate: sameAmount ? previous.sourceRate : null,
-    sourceKey: previous?.sourceKey ?? (form.dataset.mail || null),
+    sourceKey: previous?.sourceKey ?? null,
     yen: preserve ? previous.yen : null,
     yuan: preserve ? previous.yuan : null,
     fx: sameDay ? previous.fx : {}
@@ -1348,204 +1339,6 @@ function submitDriveConfig(form) {
   formError('')
 }
 
-const mailMessages = {
-  authorize: 'Gmail 授权已过期，请继续检查。',
-  authorizing: '等待 Google 授权…',
-  denied: 'Gmail 授权未完成，请重试。',
-  checking: '正在检查扣款邮件…',
-  checked: '已检查扣款邮件。',
-  offline: '离线中，联网后可以检查邮件。',
-  error: '邮件检查未完成，请重试。',
-  forbidden: '无法读取 Gmail，请检查 Gmail API 和 OAuth 权限。',
-  'google-unavailable': '暂时无法连接 Google，请重试。',
-  'wrong-account': '请选择原来绑定的 Gmail 账号。'
-}
-
-function pendingMail() {
-  const drafts = mailStatus.mailbox.drafts
-  if (!drafts.length) return []
-  const saved = new Set(state.entries.map(entry => entry.sourceKey))
-  return drafts.filter(draft => !saved.has(draft.sourceKey)).sort((a, b) => b.at.localeCompare(a.at))
-}
-
-function mailSummary() {
-  const { mailbox, phase } = mailStatus
-  return t(mailMessages[phase] ?? (!mailbox.binding ? '尚未绑定 Gmail' : mailbox.senders.length ? '已绑定 Gmail' : '添加扣款邮件的发件地址后开始检查。'))
-}
-
-function mailBanner() {
-  const { mailbox, phase, authorized } = mailStatus
-  if (!mailbox.binding) return ''
-  const count = pendingMail().length
-  const renew = !authorized && (mailbox.senders.length || count)
-  const failed = authorized && ['error', 'forbidden', 'offline'].includes(phase)
-  return `${count ? `<button type="button" class="due-reminder" data-action="mail-review">
-    ${icon('mail', 17)}<span>${t('邮件扣款')}</span><small>${t('{0} 笔待确认', count)}</small>${icon('right', 15)}</button>` : ''}
-    ${renew || failed ? `<div class="mail-resume"><span>${mailSummary()}</span>
-      ${button(renew ? 'mail-authorize' : 'mail-check', t(renew ? '继续检查' : '立即检查'), phase === 'authorizing' ? 'disabled' : '', '', 'subtle')}</div>` : ''}`.trim()
-}
-
-function paintMail() {
-  const reminder = byId('mail-reminder')
-  if (reminder) {
-    const next = mailBanner()
-    if (reminder.dataset.content !== next) {
-      reminder.innerHTML = next
-      reminder.dataset.content = next
-    }
-  }
-  const caption = byId('settings-mail-caption')
-  if (caption) caption.textContent = mailSummary()
-  const settings = byId('mail-settings')
-  if (settings) {
-    const { mailbox, phase, ready, authorized } = mailStatus
-    const busy = phase === 'authorizing' || phase === 'checking'
-    byId('mail-status').textContent = mailSummary()
-    byId('mail-account').textContent = mailbox.binding?.email ?? ''
-    byId('mail-connect-form').hidden = Boolean(mailbox.binding)
-    const connect = byId('mail-connect-form').querySelector('[type="submit"]')
-    connect.disabled = busy
-    byId('mail-sender-form').hidden = !mailbox.binding
-    const senders = mailbox.senders.map(sender => `<li class="feature-row"><span>${escape(sender.address)}</span>
-      ${icoButton('mail-remove-sender', 'close', t('移除发件地址'), `data-value="${escape(sender.id)}"`)}</li>`).join('')
-    const list = byId('mail-senders')
-    if (list.dataset.content !== senders) { list.innerHTML = senders; list.dataset.content = senders }
-    byId('mail-settings-actions').innerHTML = mailbox.binding ? `
-      ${button('mail-disconnect', t('解除绑定'), '', '', 'subtle leading')}
-      ${pendingMail().length ? button('mail-review', t('查看待确认')) : ''}
-      ${authorized ? button('mail-check', t('立即检查'), busy || !mailbox.senders.length ? 'disabled' : '', '', 'primary')
-        : button('mail-authorize', t('继续检查'), busy ? 'disabled' : '', '', 'primary')}` : ''
-    connect.textContent = t(ready ? '绑定 Gmail' : '加载 Google 授权')
-  }
-  if (byId('mail-review-form')) paintMailReview()
-}
-
-function openMailSettings() {
-  openDialog(t('邮件记账'), `<div id="mail-settings" class="form-grid">
-    <p class="fine">${t('此功能需要 Gmail 只读权限。打开或切回应用时，小日账会查询你指定发件地址的扣款通知。邮件正文在本机识别，确认后的流水可随现有设置同步至 Google Drive。')}</p>
-    <p class="fine"><a href="./privacy.html" target="_blank" rel="noopener">${t('邮件记账隐私说明')}</a></p>
-    <p class="fine" id="mail-account"></p><p class="fine" id="mail-status" role="status"></p>
-    <form id="mail-connect-form" class="form-grid">
-      ${field(t('Google OAuth 客户端 ID'), `<input name="client" type="text" required spellcheck="false" autocapitalize="none" autocomplete="off" value="${escape(driveStatus.clientId)}">`)}
-      <p class="fine"><a href="https://github.com/silverbullet522/xiaorizhang#gmail-邮件记账" target="_blank" rel="noopener">${t('Gmail 配置说明')}</a></p>
-      <div class="form-footer">${submitButton(t('绑定 Gmail'))}</div>
-    </form>
-    <ul id="mail-senders" class="feature-list"></ul>
-    <form id="mail-sender-form" class="form-grid" hidden>
-      ${field(t('扣款通知的发件地址'), '<input name="sender" type="email" required maxlength="254" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="notice@example.com">')}
-      <div class="form-footer">${submitButton(t('添加'))}</div>
-    </form>
-    ${errorPlaceholder}<div id="mail-settings-actions" class="form-footer"></div>
-  </div>`)
-  paintMail()
-  prepareMailGoogle()
-}
-
-const mailReviewNotes = {
-  multiple: '邮件中有多个可能的扣款金额，请填写实际扣款金额。',
-  missing: '请对照邮件填写扣款金额。',
-  unknownCurrency: '请选择邮件扣款的实际币种。'
-}
-
-function mailDraftNotes(draft) {
-  return [mailReviewNotes[draft.status], draft.usedReceivedTime ? '使用邮件接收时间。' : '',
-    draft.suspect ? '可能与另一笔扣款重复，请逐笔核对。' : ''].filter(Boolean).map(message => t(message))
-}
-
-function mailEntryNotice(draft) {
-  return `<p class="screen-review${draft.suspect ? ' warn' : ''}">${icon('mail', 18)}<span>${[escape(draft.sender), ...mailDraftNotes(draft)].join(' · ')}</span></p>`
-}
-
-function openMailReview() {
-  openDialog(t('待确认的邮件扣款'), `<form id="mail-review-form" class="form-grid">
-    <div id="mail-review-list"></div>${errorPlaceholder}<div class="form-footer">
-      ${button('mail-settings', t('邮件记账设置'), '', '', 'leading')}${submitButton(t('保存所选流水'))}</div></form>`)
-  paintMailReview()
-}
-
-function paintMailReview() {
-  const list = byId('mail-review-list')
-  const drafts = pendingMail()
-  const suspects = duplicateMailKeys(drafts, state.entries)
-  const selected = new Set([...list.querySelectorAll('input:checked')].map(input => input.value))
-  const next = drafts.map(draft => {
-    const key = escape(draft.sourceKey)
-    const name = draft.note || draft.sender
-    const minor = mailDraftMinor(draft)
-    const suspect = suspects.has(draft.sourceKey)
-    const ready = minor > 0 && !suspect
-    const date = `${formatDate(draft.at.slice(0, 10), 'short')} ${draft.at.slice(11, 16)}`
-    const note = mailDraftNotes({ ...draft, suspect }).join(' ')
-    return `<div class="feature-row mail-review-row">
-      <label class="mail-review-select"><input type="checkbox" name="selected" value="${key}"${ready ? '' : ' disabled'} aria-label="${escape(t('选择邮件扣款 {0}', name))}"></label>
-      <button class="mail-review-open" type="button" data-action="mail-edit" data-value="${key}"><strong>${escape(name)}</strong>
-        <small>${escape(`${date} · ${minor > 0 ? money(minor, draft.currency) + ' ' + draft.currency : t('待补全')}`)}</small>
-        ${note ? `<small>${escape(note)}</small>` : ''}</button>
-      ${button('mail-ignore', t('忽略'), `data-value="${key}"`, '', 'subtle')}
-    </div>`
-  }).join('') || `<p class="fine">${t('暂无待确认的邮件扣款。')}</p>`
-  if (list.dataset.content !== next) {
-    const active = document.activeElement
-    list.innerHTML = next
-    list.dataset.content = next
-    for (const control of list.querySelectorAll('input,button')) {
-      if (control.type === 'checkbox' && !control.disabled && selected.has(control.value)) control.checked = true
-      if ((active?.value && active.value === control.value && !control.disabled) ||
-        (active?.dataset.value && active.dataset.value === control.dataset.value && active.dataset.action === control.dataset.action)) {
-        control.focus({ preventScroll: true })
-      }
-    }
-  }
-  updateMailSelection(list.closest('form'))
-}
-
-function updateMailSelection(form) {
-  form.querySelector('[type="submit"]').disabled = !form.querySelector('input:checked') || Boolean(form.dataset.saving)
-}
-
-function prefillMail(draft, suggest = createCategorySuggester(state.entries, state.categories)) {
-  const match = findMerchantRule(state.features.merchants, draft.note, state.categories, 'expense')
-  return { ...draft, direction: 'expense', note: match.note, merchant: draft.note,
-    categoryId: match.categoryId ?? suggest({ ...draft, direction: 'expense' }) }
-}
-
-function editMailDraft(key) {
-  const drafts = pendingMail()
-  const draft = drafts.find(item => item.sourceKey === key)
-  if (draft) openEntry(null, { ...prefillMail(draft), suspect: duplicateMailKeys(drafts, state.entries).has(key) })
-}
-
-async function submitMailReview(form) {
-  const chosen = new Set(new FormData(form).getAll('selected'))
-  const suggest = createCategorySuggester(state.entries, state.categories)
-  const createdAt = new Date().toISOString()
-  const entries = pendingMail().filter(draft => chosen.has(draft.sourceKey) && mailDraftMinor(draft) > 0).map(draft => {
-    const { at, currency, sourceKey, direction, note, categoryId } = prefillMail(draft, suggest)
-    return withQuotes({ id: crypto.randomUUID(), at, createdAt, currency, minor: mailDraftMinor(draft), sourceKey, direction, note,
-      categoryId, yen: null, yuan: null, settlementYen: null, sourceRate: null, fx: {} }, quotesFor(at.slice(0, 10)))
-  })
-  if (!entries.length) return
-  const result = await saveMailEntries(entries, true)
-  await reload()
-  await refreshMail()
-  if (result.added) toast(t('已保存 {0} 笔邮件扣款。', result.added), true)
-  if (result.review && byId('mail-review-form') === form) formError(t('部分邮件仍需逐笔核对。'))
-  if (result.added) await refreshRates()
-}
-
-function submitMailConnect(form) {
-  const id = form.elements.client.value.trim()
-  if (!validGoogleClient(id)) formError(t('请输入以 .apps.googleusercontent.com 结尾的客户端 ID。'))
-  else authorizeMail(id)
-}
-
-async function submitMailSender(form) {
-  const address = mailAddress(form.elements.sender.value)
-  if (!address) { formError(t('请输入有效的发件地址。')); return }
-  await changeMailSender(address)
-  form.reset()
-}
-
 function settingsPage() {
   const row = (action, glyph, label, extra = '') => `<button class="settings-row" type="button" data-action="${action}" ${extra}>
     ${icon(glyph, 18)}<span>${label}</span>${icon('right', 14)}</button>`
@@ -1558,8 +1351,7 @@ function settingsPage() {
         <select id="app-language" aria-label="${t('语言')}">${Object.entries(languageOptions).map(([code, name]) => option(code, name, language)
           .replace('<option ', `<option lang="${code}" `)).join('')}</select></label>` +
         Object.entries(featureIcons).map(([list, glyph]) => row('manage-feature', glyph, t(featureTitles[list]), `data-value="${list}"`)).join(''))}
-      ${group(t('应用与离线'), row('screen-guide', 'scan', t('配置屏幕记账')) + row('mail-settings', 'mail', t('邮件记账')),
-        `<p class="settings-note" id="settings-mail-caption">${mailSummary()}</p>` +
+      ${group(t('应用与离线'), row('screen-guide', 'scan', t('配置屏幕记账')),
         `<p class="settings-note" id="settings-offline">${offlineDescription()}</p>
         ${standalone ? '' : `<p class="settings-note">${t('在 iPhone 的 Safari 里轻点「分享」→「添加到主屏幕」，开启「作为 Web App 打开」。')}</p>`}`)}
       ${group(t('数据与备份'),
@@ -1665,7 +1457,6 @@ function openClearLedger() {
 
 async function submitClearLedger(form) {
   clearQuoteCache()
-  resetMailSession()
   await clearLedger()
   if (!importState?.saving) importState = null
   pendingBackup = null
@@ -1856,20 +1647,8 @@ async function submitEntry(form, control) {
       formError(t('记住商户前，请填写商户名称并选择分类。'))
       return
     }
-    const result = form.dataset.mail ? await saveMailEntries([record], false, merchant) : await saveEntry(record, merchant)
-    if (result === 'invalid') {
+    if (await saveEntry(record, merchant) === 'invalid') {
       formError(t('无法保存商户规则，请检查同名规则和分类。'))
-      return
-    }
-    if (form.dataset.mail) {
-      await reload()
-      await refreshMail()
-      if (byId('entry-form') === form && dialog.open) {
-        if (pendingMail().length) openMailReview()
-        else dialog.close()
-      }
-      toast(result.added ? t('流水已保存') : t('这封邮件已处理或绑定已更改。'), Boolean(result.added))
-      if (result.added) await refreshRates()
       return
     }
   }
@@ -2142,14 +1921,6 @@ const actions = {
   'drive-authorize': authorizeDrive,
   'drive-pause': pauseDrive,
   'drive-now': syncDriveNow,
-  'mail-settings': openMailSettings,
-  'mail-authorize': () => authorizeMail(),
-  'mail-check': () => checkMailNow(),
-  'mail-disconnect': () => { if (confirm(t('解除绑定并清除本机的待确认邮件？'))) return disconnectMail() },
-  'mail-remove-sender': ({ value }) => changeMailSender(null, value),
-  'mail-review': openMailReview,
-  'mail-edit': ({ value }) => editMailDraft(value),
-  'mail-ignore': ({ value }) => ignoreMailDraft(value),
   'export-backup-range': () => openDataRange('export'),
   'export-csv': () => openDataRange('csv'),
   'manage-feature': ({ value }) => manageFeature(value),
@@ -2242,7 +2013,6 @@ document.addEventListener('click', event => {
 
 const forms = {
   'drive-config-form': submitDriveConfig,
-  'mail-connect-form': submitMailConnect, 'mail-sender-form': submitMailSender, 'mail-review-form': submitMailReview,
   'entry-form': submitEntry, 'category-form': submitCategory, 'period-form': submitPeriod, 'map-form': mappingSubmit,
   'data-range-form': submitDataRange, 'clear-ledger-form': submitClearLedger, 'feature-form': submitFeature,
   'screen-form': form => applyScreenText(form.elements.screenText.value)
@@ -2260,8 +2030,7 @@ dialog.addEventListener('submit', async event => {
   } catch (error) { handleError(error) }
   finally {
     delete form.dataset.saving
-    if (control) control.disabled = form.id === 'mail-connect-form' && mailStatus.phase === 'authorizing'
-    if (form.id === 'mail-review-form') updateMailSelection(form)
+    if (control) control.disabled = false
   }
 })
 
@@ -2281,7 +2050,6 @@ dialog.addEventListener('change', event => {
     return
   }
   const form = control.form
-  if (form?.id === 'mail-review-form') { updateMailSelection(form); return }
   if (form?.id === 'feature-form' && control.name === 'cycle' && form.dataset.sourceDay) {
     if (form.elements.start.value === form.dataset.suggestedStart) {
       const next = nextFutureBillDate(form.dataset.sourceDay, todayTokyo(), control.value) ?? ''
@@ -2396,8 +2164,6 @@ byId('file-backup').addEventListener('change', async event => {
 function updateConnectivity() {
   chrome()
   syncDriveNow()
-  if (navigator.onLine && mailStatus.mailbox.binding && !mailStatus.authorized) prepareMailGoogle()
-  checkMailNow()
   if (navigator.onLine) refreshRates().catch(handleError)
 }
 window.addEventListener('online', updateConnectivity)
@@ -2407,7 +2173,6 @@ document.addEventListener('visibilitychange', () => {
   // Coming back from another app usually means a shortcut just copied a payment screen.
   if (Date.now() - hiddenAt > 1500) offerPaste()
   queueDriveSync(0)
-  refreshMail().then(() => checkMailNow()).catch(handleError)
   reload().then(() => refreshRates()).catch(handleError)
 })
 document.addEventListener('keydown', event => {
@@ -2464,7 +2229,6 @@ setInterval(() => {
 }, 5 * 60 * 1000)
 
 driveEvents.addEventListener('status', paintDriveSettings)
-mailEvents.addEventListener('status', paintMail)
 driveEvents.addEventListener('ledger', () => {
   const search = byId('ledger-search')
   if (search && document.activeElement === search && state.view === 'home') {
@@ -2495,7 +2259,6 @@ async function start() {
   try {
     await reload()
     initializeDrive().catch(handleError)
-    initializeMail().catch(handleError)
     offerPaste()
     refreshRates().catch(handleError)
     if ('serviceWorker' in navigator) {
